@@ -39,6 +39,23 @@ def test_plan_seeds_the_rate_limit_bucket(load):
     assert config.get("dev").bucket == (2000.0, 100.0)   # plus
 
 
+@pytest.mark.parametrize("plan", ["basic", "grow", "shopify", "advanced",
+                                  "standard", "plus", "enterprise"])
+def test_shopify_plan_names_are_accepted(load, plan):
+    """The value people type is whatever their plan dropdown says, so every
+    real Shopify tier name has to be valid -- 'Basic' especially."""
+    config = load(f'[[shops]]\nid = "a"\ndomain = "a.myshopify.com"\n'
+                  f'access_token = "shpat_x"\nplan = "{plan}"\n')
+    assert config.get("a").bucket[0] > 0
+
+
+def test_plan_name_is_case_insensitive(load):
+    """The dropdown shows 'Basic', capitalised."""
+    config = load('[[shops]]\nid = "a"\ndomain = "a.myshopify.com"\n'
+                  'access_token = "shpat_x"\nplan = "Basic"\n')
+    assert config.get("a").plan == "basic"
+
+
 def test_api_version_defaults_when_unset(load):
     config = load('[[shops]]\nid = "a"\ndomain = "a.myshopify.com"\n'
                   'access_token = "shpat_a"\n')

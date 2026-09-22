@@ -58,9 +58,15 @@ _API_VERSION_RE = re.compile(r"^\d{4}-\d{2}$")
 # one -- so being wrong here costs at most one needless sleep, and only ever in
 # the safe direction (under-estimating capacity). Don't tune these upward to
 # match an observation; the live figures already win.
+# Keys are Shopify's own plan names as the admin and the Dev Dashboard spell
+# them, so the value here is whatever the plan dropdown said. "standard" is kept
+# as a synonym for the non-Plus tiers.
 _PLAN_BUCKETS = {
-    "standard": (1000.0, 50.0),
+    "basic": (1000.0, 50.0),
+    "grow": (1000.0, 50.0),
+    "shopify": (1000.0, 50.0),      # the former name of the Grow tier
     "advanced": (1000.0, 50.0),
+    "standard": (1000.0, 50.0),     # generic synonym for any non-Plus tier
     "plus": (2000.0, 100.0),
     "enterprise": (2000.0, 100.0),
 }

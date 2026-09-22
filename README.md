@@ -109,6 +109,9 @@ it with `--shop dev` is worth the five minutes before any bulk edit.
 |------|-------------|
 | `auth` | One-time browser login to get an access token for a store. |
 | `shop-info` | Store name, plan, currency, API connectivity. Run this first. |
+| `list-inventory` | Stock levels across every location. Read-only. |
+| `move-inventory` | Move stock between two locations, additively. |
+| `seed-dev` | Populate a development store with test products. |
 
 ## Adding a task
 

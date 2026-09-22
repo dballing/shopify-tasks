@@ -39,12 +39,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field as dc_field
 
-from shopifylib import gid, output
+from shopifylib import gid, inventory, output
 from shopifylib.errors import TaskError
 from shopifylib.task import task
 
 # The quantity state that moves. See the module docstring for why not on_hand.
-STATE = "available"
+STATE = inventory.AVAILABLE
 
 # Shown in the store's inventory adjustment history. Shopify takes a free string
 # here (the schema types it String!, not an enum), but only its documented
@@ -350,14 +350,9 @@ def _resolve_location(locations: list[dict], value: str, flag: str) -> dict:
 # Scanning
 # ---------------------------------------------------------------------------
 
-def _available(level: dict | None) -> int:
-    """Pull the 'available' figure out of a quantities list, defaulting to 0."""
-    if not level:
-        return 0
-    for entry in level.get("quantities") or []:
-        if entry.get("name") == STATE:
-            return int(entry.get("quantity") or 0)
-    return 0
+# Shared with list-inventory and seed-dev so all three agree on what a missing
+# level means; see shopifylib.inventory.
+_available = inventory.available_at
 
 
 def _scan_all(ctx, from_id: str, to_id: str, *, limit: int | None) -> list[Move]:
@@ -446,16 +441,7 @@ def _build_move(*, item: dict, from_available: int, to_level: dict | None,
     return move
 
 
-def _clean_label(name: str) -> str:
-    """Drop Shopify's placeholder variant suffix.
-
-    A product with no real options still has one variant, which Shopify names
-    "Default Title" -- so displayName comes back as "Blue Bead - Default Title".
-    For a store where most products are single-variant that suffix is on nearly
-    every row, pushing the part that identifies the item off the edge of the
-    table.
-    """
-    return name.removesuffix(" - Default Title").strip() or name
+_clean_label = inventory.clean_label
 
 
 def _label_from_item(item: dict) -> str:

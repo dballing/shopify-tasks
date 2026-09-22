@@ -62,9 +62,13 @@ Python 3.11+ required (stdlib `tomllib`). `./shopify.sh` and `./run_tests.sh` ac
 | `shopifylib/paging.py` | `paginate()` — cursor walking over Relay connections. |
 | `shopifylib/errors.py` | Exception hierarchy, shaped to the three failure layers. |
 | `shopifylib/task.py` | `@task` decorator, `REGISTRY`, `TaskContext` (incl. `ctx.mutate`). |
+| `shopifylib/inventory.py` | Shared stock vocabulary: `location_cell` (the `0` / `--` / `*` markers), `available_at`, `clean_label`, `legend`. |
 | `shopifylib/gid.py` | GID build/parse/coerce, admin URLs. |
 | `shopifylib/output.py` | Logging setup, `Progress`, `emit_json`/`emit_jsonl`, `format_table`. |
 | `tasks/auth.py` | One-time OAuth flow: localhost callback catcher, state/HMAC/domain validation, code exchange. |
+| `tasks/move_inventory.py` | Move stock between locations: paired deltas, compare-and-swap, activation. |
+| `tasks/list_inventory.py` | Read-only stock table across locations; same shape as `seed-dev`. |
+| `tasks/seed_dev.py` | Populate a development store (synthetic or cloned). Guarded to dev stores only. |
 | `tasks/shop_info.py` | The shipped read-only task; also the worked example and connectivity smoke test. |
 
 ## Authentication
@@ -124,6 +128,7 @@ def run(ctx, args):
 - **Rate limiting is cost-based, not request-based.** Each query is charged points from a leaky bucket. `throttle.Budget` paces *ahead* of the limit using each response's `extensions.cost`, because reacting to `THROTTLED` instead means a long run spends most of its wall-clock in blind backoff. Pacing uses `requestedQueryCost` (the upfront estimate the bucket is actually checked against), not `actualQueryCost`.
 - **Don't trust the published per-plan bucket figures.** The docs say 1000 @ 50/s on standard plans and 2000 @ 100/s on Plus, but a Basic store here was observed with 2000 @ 100/s. `config._PLAN_BUCKETS` is therefore a conservative *seed* only — the live `throttleStatus` overrides it on the first response. Never make logic depend on the configured `plan`; read the budget.
 - **A single query is capped at 1000 points on every plan** — Plus buys a deeper bucket, not bigger queries. Nested connections multiply: `products(first: 250) { variants(first: 100) }` blows the cap. That is why `page_size` is an explicit argument to `paginate()` rather than a constant.
+- **Don't nest three connections.** `products -> variants -> inventoryLevels` in one document measured 1007 points against a real store — over the 1000-point per-query cap that applies on every plan. `list-inventory` reads levels per *location* (a flat, cheap connection) and joins to variants locally by inventory item id. Reach for two cheap queries before reaching for a smaller page size.
 - **Pagination without `pageInfo` silently returns one page.** `paginate()` raises instead, because a truncated result set that looks complete is worse than an error. It also refuses to loop when `hasNextPage` is true but the cursor doesn't advance.
 - **The Admin API only answers on `*.myshopify.com`.** A custom storefront domain 404s, and the 404 looks like a version problem. `config.py` rejects non-myshopify domains upfront for this reason.
 - **Changing the app's scopes invalidates the token's scope set.** The cached token carries the scopes granted at authorization time; new calls needing a newly-added scope get `ACCESS_DENIED` until `./shopify.sh auth` is re-run. Grant what you expect to need up front.

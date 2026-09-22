@@ -28,7 +28,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
-from shopifylib import gid, output
+from shopifylib import gid, inventory, output
 from shopifylib.errors import TaskError
 from shopifylib.paging import paginate
 from shopifylib.task import task
@@ -40,8 +40,8 @@ FAIR = "Craft Fair Inventory"
 
 # Shopify's representation of a product with no real options. Not a placeholder
 # to be tidied away: productSet requires an option whenever variants are given.
-DEFAULT_OPTION = "Title"
-DEFAULT_OPTION_VALUE = "Default Title"
+DEFAULT_OPTION = inventory.DEFAULT_OPTION
+DEFAULT_OPTION_VALUE = inventory.DEFAULT_OPTION_VALUE
 
 # Fixed so --reset reproduces the same store every time. A rehearsal you can't
 # repeat is a rehearsal you can't trust.
@@ -481,26 +481,13 @@ def _wipe(ctx) -> None:
 
 PREVIEW_ROWS = 40
 
-# A location absent from a variant's quantities is never activated there, which
-# is a different state from being stocked with nothing. Both would otherwise
-# print as "0" -- the conflation that let the activation path go untested.
-NOT_ACTIVATED = "--"
+NOT_ACTIVATED = inventory.NOT_ACTIVATED
 
 
 def _cell(product: SeedProduct, location: str) -> str:
-    """One location's column for a product, distinguishing empty from absent.
-
-        6     stocked, six units
-        0     stocked, empty
-        --    not activated here at all
-        4*    stocked, but some variants are not activated here
-    """
-    present = [v for v in product.variants if location in v.quantities]
-    if not present:
-        return NOT_ACTIVATED
-    total = sum(v.quantities[location] for v in present)
-    partial = "*" if len(present) != len(product.variants) else ""
-    return f"{total}{partial}"
+    """One location's column for a product. See shopifylib.inventory."""
+    return inventory.location_cell(
+        [v.quantities for v in product.variants], location)
 
 
 def _preview(ctx, products: list[SeedProduct]) -> None:
@@ -526,9 +513,8 @@ def _preview(ctx, products: list[SeedProduct]) -> None:
 
     print(f"\n{len(products)} product(s), "
           f"{sum(p.total for p in products)} unit(s) of stock")
-    print(f"  {NOT_ACTIVATED} = not activated at that location (a move must "
-          f"activate it first)")
-    print(f"   * = only some variants activated there")
+    for line in inventory.legend():
+        print(line)
     # Both directions: stock goes out to a fair and comes back, and a variant
     # that debuted at a show needs activating at home on the return leg.
     print(f"  {_needing_activation(FAIR)} variant(s) need activating on a "

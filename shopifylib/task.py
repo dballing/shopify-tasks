@@ -220,6 +220,48 @@ class TaskContext:
         """Abort the task with a clean message and a non-zero exit code."""
         raise TaskError(message)
 
+    def reader_for(self, shop_id: str):
+        """A **read-only** client for a different configured shop.
+
+        For tasks that copy between stores. The returned client always has
+        writes disabled, whatever ``--commit`` said: a task operates on the one
+        store ``--shop`` named, and a second store it merely reads from must not
+        become a second write target by accident. The caller closes it.
+        """
+        from .client import ShopifyClient
+        from .config import load_config
+
+        other = load_config().get(shop_id)
+        if other.domain == self.shop.domain:
+            raise TaskError(
+                f"--shop and the source store are both {shop_id!r} ({other.domain}); "
+                f"a store cannot be copied onto itself."
+            )
+        return ShopifyClient(other, writes_enabled=False,
+                             required_scopes=self.spec.scopes if self.spec else None)
+
+    def require_development_store(self) -> None:
+        """Abort unless the target is a Shopify development store.
+
+        A guard for tasks that fabricate or destroy data wholesale. Dry-run
+        protects against running the wrong task; this protects against running
+        the right task against the wrong store, which no amount of previewing
+        catches -- the preview looks perfectly correct, just aimed at a live
+        storefront. There is deliberately no override flag.
+        """
+        plan = self.query(
+            "query { shop { name plan { displayName partnerDevelopment } } }"
+        )["shop"]
+        if not (plan.get("plan") or {}).get("partnerDevelopment"):
+            raise TaskError(
+                f"{self.shop.id!r} ({plan.get('name')}, {self.shop.domain}) is not a "
+                f"development store, and this task only runs against one.\n"
+                f"It creates or deletes data wholesale, which would be destructive on "
+                f"a real storefront.\n"
+                f"Create a dev store at dev.shopify.com/dashboard, add it to "
+                f"config.toml, and pass --shop <its id>."
+            )
+
     @property
     def store_handle(self) -> str:
         """The bare store handle, for building admin URLs (see gid.admin_url)."""

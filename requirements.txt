@@ -1,0 +1,8 @@
+# HTTP transport. The Shopify Admin API is plain JSON-over-POST, so a GraphQL
+# client library would add a dependency and a schema-fetch step without
+# removing any of the work this repo actually has to do (cost-based rate
+# limiting, userErrors, dry-run enforcement).
+requests>=2.31
+
+# Testing (dev-only)
+pytest>=8

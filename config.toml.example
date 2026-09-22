@@ -1,0 +1,100 @@
+# shopify-tasks configuration -- copy to config.toml and fill in.
+#
+# config.toml is gitignored and MUST stay that way: these credentials have write
+# access to a live storefront. Every secret below can come from the environment
+# instead (named under each shop), which matters here because this repo lives in
+# a Dropbox tree -- anything written to disk gets synced.
+
+# Which shop runs when --shop is not given. Required once more than one is
+# configured, so a bare command can never silently hit the wrong store.
+default_shop = "prod"
+
+# Shopify ships a new API version each quarter and retires each one about a year
+# later. Pin it explicitly and bump deliberately; a floating version means your
+# scripts change behavior on Shopify's schedule rather than yours.
+#
+# As of 2026-09: 2026-07 is the latest stable, 2026-10 is the release candidate
+# (stable on 2026-10-01). 2025-10 stops working 2026-10-16.
+api_version = "2026-07"
+
+
+[[shops]]
+# The handle you type: --shop prod
+id = "prod"
+
+# Must be the canonical *.myshopify.com domain. A custom storefront domain does
+# not answer Admin API calls. Find it in Settings > Domains, or read it out of
+# the URL while logged into the admin.
+domain = "your-store.myshopify.com"
+
+# --- Credentials: pick ONE of the two blocks below ------------------------
+#
+# Shopify retired admin-created custom apps on 2026-01-01. Those were the ones
+# that revealed a permanent "shpat_" token in the admin UI. Apps are now created
+# in the Dev Dashboard (dev.shopify.com/dashboard), which issues tokens through
+# OAuth instead.
+
+# (a) App credentials -- Dev Dashboard > your app > Settings > Credentials.
+#     Then run ONCE:   ./shopify.sh auth --shop prod
+#     That opens your browser, you approve the app, and it caches a token.
+#
+#     Requires these in the Dev Dashboard, and they must share a host:
+#       App URL                    http://localhost:5004
+#       Allowed redirection URL(s) http://localhost:5004/callback
+#
+#     App config is VERSIONED: after editing those fields you must click
+#     Release, or OAuth still uses the last released version and the callback
+#     comes back as "redirect_uri is not whitelisted".
+#
+#     Env alternatives: SHOPIFY_CLIENT_ID_PROD, SHOPIFY_CLIENT_SECRET_PROD
+client_id = "replace_me"
+client_secret = "replace_me"
+
+# (b) A static access token, if you have one:
+#       * a legacy "shpat_" token from a pre-2026 custom app, or
+#       * the non-expiring token printed by './shopify.sh auth'.
+#     Set this and the client_id/client_secret above become unnecessary.
+#
+#     Env alternative: SHOPIFY_TOKEN_PROD
+# access_token = "shpat_replace_me"
+
+# Seeds the rate-limit estimate before the first API response reports the real
+# figures: "standard" (1000 points, 50/s) or "plus" (2000 points, 100/s).
+# Getting it wrong costs at most one extra sleep on the first call.
+plan = "standard"
+
+
+# A development store to rehearse destructive tasks against. Shopify partner dev
+# stores are free; running a bulk edit there first is the cheapest possible way
+# to discover that your product selector matched more than you meant.
+#
+# A dev store in the same organization as the app can skip the browser flow
+# entirely -- client_id/client_secret alone are enough, because the client
+# credentials grant works within an organization.
+#
+# [[shops]]
+# id = "dev"
+# domain = "your-dev-store.myshopify.com"
+# client_id = "replace_me"
+# client_secret = "replace_me"
+# plan = "standard"
+# api_version = "2026-10"   # per-shop override, e.g. to try a release candidate
+
+
+# ---------------------------------------------------------------------------
+# Scopes
+# ---------------------------------------------------------------------------
+# Scopes are set on the app in the Dev Dashboard, not here. Each task declares
+# what it needs (see `scopes=` in tasks/*.py) so a permission failure tells you
+# what to grant.
+#
+# For the task areas this repo starts with:
+#   read_products, write_products          products, variants, media
+#   read_inventory, write_inventory        inventory levels
+#   read_locations                         locations (inventory targets)
+#
+# After changing the app's scopes, re-run './shopify.sh auth' -- the existing
+# token carries the old scope set and will keep being refused for the new calls.
+#
+# Note: reading orders older than 60 days needs read_all_orders, which requires
+# a separate approval request to Shopify.

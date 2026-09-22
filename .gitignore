@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# shopify-tasks: holds Admin API access tokens with write access to a live
+# storefront. Never un-ignore this; config.toml.example is the tracked template.
+config.toml
+config.toml.bak
+config.toml~
+
+# Task output (exports, JSONL dumps, bulk-operation downloads)
+out/
+*.jsonl

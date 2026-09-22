@@ -189,6 +189,7 @@ class ShopifyClient:
         *,
         field: str | None = None,
         operation_name: str | None = None,
+        check_errors: bool = True,
     ) -> dict:
         """Run a mutation and check its ``userErrors`` before returning.
 
@@ -200,6 +201,14 @@ class ShopifyClient:
 
         Use this rather than ``execute`` for writes. A mutation whose userErrors
         go unchecked reports success while changing nothing.
+
+        ``check_errors=False`` returns the payload with its userErrors intact
+        instead of raising. That exists for batch mutations that need to tell
+        *which* entries failed and retry the rest -- a partial failure there is
+        an expected outcome, not an exception. **A caller that passes False owns
+        the userErrors** and must inspect them; ignoring them reintroduces
+        exactly the silent-success bug this method exists to prevent. Nothing
+        else should use it.
         """
         data = self.execute(
             document, variables, operation_name=operation_name, allow_write=True
@@ -212,12 +221,14 @@ class ShopifyClient:
                       "path": [field]}],
                     query=document,
                 )
-            check_user_errors(payload, mutation=field)
+            if check_errors:
+                check_user_errors(payload, mutation=field)
             return payload
 
-        for name, payload in data.items():
-            if isinstance(payload, dict):
-                check_user_errors(payload, mutation=name)
+        if check_errors:
+            for name, payload in data.items():
+                if isinstance(payload, dict):
+                    check_user_errors(payload, mutation=name)
         return data
 
     def close(self) -> None:

@@ -181,6 +181,7 @@ class TaskContext:
         field: str | None = None,
         describe: str | None = None,
         operation_name: str | None = None,
+        check_errors: bool = True,
     ) -> dict:
         """Perform a mutation, or log it and skip when this is a dry run.
 
@@ -191,6 +192,10 @@ class TaskContext:
 
         ``field`` names the mutation field so its userErrors can be verified;
         pass it whenever you know it, which is nearly always.
+
+        ``check_errors=False`` hands back the payload with userErrors intact so
+        a batch caller can report which entries failed and retry the rest; see
+        ``ShopifyClient.mutate``. The caller then owns those errors.
         """
         label = describe or (field or "mutation")
 
@@ -203,7 +208,8 @@ class TaskContext:
 
         self.log.debug("%s", label)
         result = self.client.mutate(
-            document, variables, field=field, operation_name=operation_name
+            document, variables, field=field, operation_name=operation_name,
+            check_errors=check_errors,
         )
         self.writes_performed += 1
         return result

@@ -64,32 +64,37 @@ query AllProducts($first: Int!, $after: String) {
 }
 """
 
+# Deliberately does NOT nest inventoryLevels under variants. Doing so makes
+# three nested connections, whose costs multiply past the 1000-point per-query
+# cap -- this query measured 1112 before it was flattened. Levels come from
+# inventory.read_levels instead, one cheap pass per location, joined here by
+# inventory item id.
 CLONE_SOURCE_QUERY = """
-query CloneSource($first: Int!, $after: String) {
+query CloneSource($first: Int!, $after: String, $variants: Int!) {
   products(first: $first, after: $after) {
     nodes {
       title descriptionHtml productType vendor tags status
       options { name optionValues { name } }
-      variants(first: 100) {
+      variants(first: $variants) {
         nodes {
           title price sku
           selectedOptions { name value }
-          inventoryItem {
-            tracked
-            inventoryLevels(first: 20) {
-              nodes {
-                location { name }
-                quantities(names: ["available"]) { name quantity }
-              }
-            }
-          }
+          inventoryItem { id tracked }
         }
+        pageInfo { hasNextPage }
       }
     }
     pageInfo { hasNextPage endCursor }
   }
 }
 """
+
+SOURCE_LOCATIONS_QUERY = "{ locations(first: 250) { nodes { id name } } }"
+
+# Smaller than list-inventory's page because this query also pulls options,
+# tags, descriptions and selectedOptions for every variant.
+CLONE_PAGE = 25
+CLONE_VARIANTS = 100
 
 PRODUCT_SET_MUTATION = """
 mutation Seed($input: ProductSetInput!) {
@@ -359,18 +364,33 @@ def _clone_source(ctx, source_id: str, *, limit: int | None) -> list[SeedProduct
     products: list[SeedProduct] = []
     with ctx.reader_for(source_id) as source:
         ctx.log.info("Reading products from %s (%s)", source_id, source.shop.domain)
+
+        # Only the locations this repo mirrors; anything else in the source
+        # store is neither fetched nor carried.
+        everything = source.execute(SOURCE_LOCATIONS_QUERY)["locations"]["nodes"]
+        locations = [l for l in everything if l["name"] in (HOME, FAIR)]
+        missing = {HOME, FAIR} - {l["name"] for l in locations}
+        if missing:
+            ctx.log.warning(
+                "%s has no location(s) named %s; cloned products will not be "
+                "stocked there.", source_id, ", ".join(sorted(missing)))
+
+        stock = inventory.read_levels(source, locations,
+                                      progress_factory=output.Progress)
+
         progress = output.Progress("reading source catalogue")
         for node in paginate(source, CLONE_SOURCE_QUERY, "products",
-                             page_size=25, max_items=limit):
+                             variables={"variants": CLONE_VARIANTS},
+                             page_size=CLONE_PAGE, max_items=limit):
             progress.tick()
-            product = _from_source(node)
+            product = _from_source(node, stock)
             if product:
                 products.append(product)
         progress.done()
     return products
 
 
-def _from_source(node: dict) -> SeedProduct | None:
+def _from_source(node: dict, stock: dict | None = None) -> SeedProduct | None:
     # Keep the "Title"/"Default Title" option exactly as the source reports it.
     # It looks like a placeholder worth dropping, but it is the real structure
     # of an optionless product and productSet requires it; stripping it makes
@@ -383,13 +403,9 @@ def _from_source(node: dict) -> SeedProduct | None:
         selected = [(o["name"], o["value"])
                     for o in variant.get("selectedOptions") or []]
         item = variant.get("inventoryItem") or {}
-        quantities: dict[str, int] = {}
-        for level in (item.get("inventoryLevels") or {}).get("nodes") or []:
-            name = (level.get("location") or {}).get("name")
-            if name in (HOME, FAIR):
-                for q in level.get("quantities") or []:
-                    if q.get("name") == "available":
-                        quantities[name] = int(q.get("quantity") or 0)
+        # dict() so a later edit can't reach back into the shared stock map.
+        # Absence of a location here still means "not activated there".
+        quantities = dict((stock or {}).get(item.get("id"), {}))
         variants.append(SeedVariant(
             option_values=selected,
             price=variant.get("price") or "0.00",

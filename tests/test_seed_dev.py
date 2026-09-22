@@ -298,6 +298,10 @@ def test_every_product_input_carries_options():
 # Cloning
 # ---------------------------------------------------------------------------
 
+# The flattened shape: levels are read separately per location and joined by
+# inventory item id, because nesting them here blew the per-query cost cap.
+SOURCE_ITEM = "gid://shopify/InventoryItem/1"
+
 SOURCE_NODE = {
     "title": "Coral Melange", "descriptionHtml": "", "productType": "Beads",
     "vendor": "Gumball", "tags": ["necklace"], "status": "ACTIVE",
@@ -305,18 +309,15 @@ SOURCE_NODE = {
     "variants": {"nodes": [{
         "title": "Default Title", "price": "12.00", "sku": "CM-1",
         "selectedOptions": [{"name": "Title", "value": "Default Title"}],
-        "inventoryItem": {"tracked": True, "inventoryLevels": {"nodes": [
-            {"location": {"name": "Home"},
-             "quantities": [{"name": "available", "quantity": 4}]},
-            {"location": {"name": "Craft Fair Inventory"},
-             "quantities": [{"name": "available", "quantity": 1}]},
-        ]}},
-    }]},
+        "inventoryItem": {"id": SOURCE_ITEM, "tracked": True},
+    }], "pageInfo": {"hasNextPage": False}},
 }
+
+SOURCE_STOCK = {SOURCE_ITEM: {"Home": 4, "Craft Fair Inventory": 1}}
 
 
 def test_clone_carries_stock_per_location():
-    product = sd._from_source(SOURCE_NODE)
+    product = sd._from_source(SOURCE_NODE, SOURCE_STOCK)
     assert product.variants[0].quantities == {"Home": 4, "Craft Fair Inventory": 1}
     assert product.variants[0].sku == "CM-1"
 
@@ -325,14 +326,14 @@ def test_clone_keeps_the_default_title_option():
     """It looks like a placeholder worth dropping, but it is the real structure
     of an optionless product and productSet requires it. Stripping it made
     every single-variant clone fail."""
-    product = sd._from_source(SOURCE_NODE)
+    product = sd._from_source(SOURCE_NODE, SOURCE_STOCK)
     assert product.options == [("Title", ["Default Title"])]
     assert product.variants[0].option_values == [("Title", "Default Title")]
 
 
 def test_cloned_single_variant_products_round_trip():
     """Source shape -> input shape, without losing the required option."""
-    payload = sd._to_input(sd._from_source(SOURCE_NODE), LOC_IDS)
+    payload = sd._to_input(sd._from_source(SOURCE_NODE, SOURCE_STOCK), LOC_IDS)
     assert payload["productOptions"] == [
         {"name": "Title", "values": [{"name": "Default Title"}]}]
     assert payload["variants"][0]["optionValues"] == [
@@ -340,21 +341,18 @@ def test_cloned_single_variant_products_round_trip():
 
 
 def test_clone_tags_its_output():
-    assert "cloned" in sd._from_source(SOURCE_NODE).tags
+    assert "cloned" in sd._from_source(SOURCE_NODE, SOURCE_STOCK).tags
 
 
 def test_clone_ignores_locations_we_do_not_mirror():
-    node = {**SOURCE_NODE, "variants": {"nodes": [{
-        **SOURCE_NODE["variants"]["nodes"][0],
-        "inventoryItem": {"tracked": True, "inventoryLevels": {"nodes": [
-            {"location": {"name": "Warehouse B"},
-             "quantities": [{"name": "available", "quantity": 99}]}]}},
-    }]}}
-    assert sd._from_source(node).variants[0].quantities == {}
+    """Unmirrored locations are filtered when the levels are read, so they
+    never reach the stock map in the first place."""
+    assert sd._from_source(SOURCE_NODE, {}).variants[0].quantities == {}
 
 
 def test_clone_skips_products_with_no_variants():
-    assert sd._from_source({**SOURCE_NODE, "variants": {"nodes": []}}) is None
+    assert sd._from_source({**SOURCE_NODE, "variants": {"nodes": [], "pageInfo": {"hasNextPage": False}}},
+                           SOURCE_STOCK) is None
 
 
 def test_reader_for_is_always_read_only(make_client, write_config):
@@ -417,9 +415,9 @@ def test_clone_preserves_archived_status():
     """Silently activating every archived product would misrepresent the
     catalogue and hide the case the other tasks have to filter."""
     node = {**SOURCE_NODE, "status": "ARCHIVED"}
-    assert sd._from_source(node).status == "ARCHIVED"
+    assert sd._from_source(node, SOURCE_STOCK).status == "ARCHIVED"
 
 
 def test_clone_defaults_to_active_when_status_is_missing():
     node = {k: v for k, v in SOURCE_NODE.items() if k != "status"}
-    assert sd._from_source(node).status == "ACTIVE"
+    assert sd._from_source(node, SOURCE_STOCK).status == "ACTIVE"

@@ -35,7 +35,6 @@ from shopifylib.task import task
 # connection -- and joined to variants locally by inventory item id.
 PRODUCT_PAGE = 50
 VARIANTS_PER_PRODUCT = 100
-LEVEL_PAGE = 250
 
 LOCATIONS_QUERY = """
 query Locations {
@@ -45,21 +44,6 @@ query Locations {
 }
 """
 
-# Flat: every item stocked at one location. Presence of a row here IS the
-# activation flag for that item at that location.
-LEVELS_QUERY = """
-query LevelsAt($id: ID!, $first: Int!, $after: String) {
-  location(id: $id) {
-    inventoryLevels(first: $first, after: $after) {
-      nodes {
-        item { id }
-        quantities(names: ["available"]) { name quantity }
-      }
-      pageInfo { hasNextPage endCursor }
-    }
-  }
-}
-"""
 
 _VARIANT_FIELDS = """
   nodes {
@@ -154,7 +138,8 @@ def run(ctx, args):
     location holding zero from one where the item was never activated.
     """
     locations = _columns(ctx, args.at)
-    stock = _read_levels(ctx, locations)
+    stock = inventory.read_levels(ctx.client, locations,
+                                  progress_factory=output.Progress)
 
     if args.pids:
         rows = _scan_products(ctx, args.pids, stock,
@@ -246,26 +231,6 @@ def _resolve(locations: list[dict], value: str) -> dict:
 # Scanning
 # ---------------------------------------------------------------------------
 
-def _read_levels(ctx, locations: list[dict]) -> dict[str, dict[str, int]]:
-    """{inventory item id: {location name: available}} for the shown locations.
-
-    One flat pass per location. A location missing from an item's inner map
-    means the item is not activated there -- the distinction the whole table is
-    built on, so it must come from a row's absence rather than a zero.
-    """
-    stock: dict[str, dict[str, int]] = {}
-    for location in locations:
-        progress = output.Progress(f"reading {location['name']}")
-        for level in ctx.paginate(LEVELS_QUERY, "location.inventoryLevels",
-                                  variables={"id": location["id"]},
-                                  page_size=LEVEL_PAGE):
-            progress.tick()
-            item_id = (level.get("item") or {}).get("id")
-            if item_id:
-                stock.setdefault(item_id, {})[location["name"]] = \
-                    inventory.available_at(level)
-        progress.done()
-    return stock
 
 
 def _scan_all(ctx, stock: dict, *, limit: int | None,

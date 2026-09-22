@@ -15,6 +15,8 @@ means the variant is not activated there**.
 """
 from __future__ import annotations
 
+from .paging import paginate
+
 # The quantity state these tasks care about: what is sellable. on_hand includes
 # units committed to unfulfilled orders, which are promised to whichever
 # location will ship them and so must not be moved.
@@ -117,3 +119,62 @@ def legend(*, indent: str = "  ") -> list[str]:
         f"(a move must activate it first)",
         f"{indent} {PARTIAL_MARKER} = only some variants activated there",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Reading stock
+# ---------------------------------------------------------------------------
+
+# Flat: every item stocked at ONE location. Deliberately not nested inside a
+# products query -- `products -> variants -> inventoryLevels` multiplies the
+# connection costs and blows the 1000-point per-query cap that applies on every
+# plan. Two tasks hit that (list-inventory at 1007 points, seed-dev's clone at
+# 1112), which is why this lives here instead of in either of them.
+LEVELS_QUERY = """
+query LevelsAt($id: ID!, $first: Int!, $after: String) {
+  location(id: $id) {
+    inventoryLevels(first: $first, after: $after) {
+      nodes {
+        item { id }
+        quantities(names: ["available"]) { name quantity }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+# A location holds one row per stocked item, so this can be large; it is also a
+# cheap connection, so a big page is fine.
+LEVEL_PAGE = 250
+
+
+def read_levels(client, locations: list[dict], *, page_size: int = LEVEL_PAGE,
+                progress_factory=None) -> dict[str, dict[str, int]]:
+    """``{inventory item id: {location name: available}}`` for some locations.
+
+    One flat pass per location, joined to products by the caller. Takes a
+    *client* rather than a TaskContext because a task that copies between
+    stores reads its source through :meth:`TaskContext.reader_for`, where a
+    context is not available.
+
+    **A location absent from an item's inner map means the item is not
+    activated there.** That must keep coming from a row's absence rather than a
+    zero -- it is the distinction the whole 0/-- vocabulary rests on.
+
+    ``progress_factory`` takes a label and returns something with ``tick()`` and
+    ``done()``; omit it to read silently.
+    """
+    stock: dict[str, dict[str, int]] = {}
+    for location in locations:
+        progress = progress_factory(f"reading {location['name']}") if progress_factory else None
+        for level in paginate(client, LEVELS_QUERY, "location.inventoryLevels",
+                              variables={"id": location["id"]}, page_size=page_size):
+            if progress:
+                progress.tick()
+            item_id = (level.get("item") or {}).get("id")
+            if item_id:
+                stock.setdefault(item_id, {})[location["name"]] = available_at(level)
+        if progress:
+            progress.done()
+    return stock

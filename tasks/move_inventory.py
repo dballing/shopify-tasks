@@ -86,7 +86,7 @@ query ScanAll($fromId: ID!, $toId: ID!, $first: Int!, $after: String) {
           id
           sku
           tracked
-          variant { id displayName product { id title } }
+          variant { id displayName product { id title status } }
           toLevel: inventoryLevel(locationId: $toId) {
             id
             quantities(names: ["available"]) { name quantity }
@@ -105,6 +105,7 @@ query ScanProducts($ids: [ID!]!, $fromId: ID!, $toId: ID!, $variants: Int!) {
     ... on Product {
       id
       title
+      status
       variants(first: $variants) {
         nodes {
           id
@@ -200,6 +201,10 @@ def add_arguments(parser):
                              f"history (default: {DEFAULT_REASON})")
     parser.add_argument("--limit", type=int, metavar="N",
                         help="only consider the first N items (for trying things out)")
+    parser.add_argument("--include-archived", action="store_true",
+                        help="also move archived products (skipped by default; "
+                             "an archived product keeps its inventory levels, so "
+                             "it is visible to this scan and would otherwise move)")
     parser.add_argument("--no-activate", action="store_true",
                         help="skip activating items at the destination; items not "
                              "already stocked there will fail instead")
@@ -228,9 +233,12 @@ def run(ctx, args):
     ctx.log.info("Moving %s -> %s", source["name"], dest["name"])
 
     if args.all:
-        moves = _scan_all(ctx, source["id"], dest["id"], limit=args.limit)
+        moves = _scan_all(ctx, source["id"], dest["id"], limit=args.limit,
+                          include_archived=args.include_archived)
     else:
-        moves = _scan_products(ctx, args.pids, source["id"], dest["id"], limit=args.limit)
+        moves = _scan_products(ctx, args.pids, source["id"], dest["id"],
+                               limit=args.limit,
+                               include_archived=args.include_archived)
 
     movable = [m for m in moves if not m.skipped]
     skipped = [m for m in moves if m.skipped]
@@ -355,7 +363,8 @@ def _resolve_location(locations: list[dict], value: str, flag: str) -> dict:
 _available = inventory.available_at
 
 
-def _scan_all(ctx, from_id: str, to_id: str, *, limit: int | None) -> list[Move]:
+def _scan_all(ctx, from_id: str, to_id: str, *, limit: int | None,
+              include_archived: bool) -> list[Move]:
     progress = output.Progress("scanning source location")
     moves: list[Move] = []
 
@@ -373,13 +382,15 @@ def _scan_all(ctx, from_id: str, to_id: str, *, limit: int | None) -> list[Move]
             from_available=_available(level),
             to_level=item.get("toLevel"),
             label=_label_from_item(item),
+            status=((item.get("variant") or {}).get("product") or {}).get("status"),
+            include_archived=include_archived,
         ))
     progress.done()
     return moves
 
 
 def _scan_products(ctx, pids: str, from_id: str, to_id: str,
-                   *, limit: int | None) -> list[Move]:
+                   *, limit: int | None, include_archived: bool) -> list[Move]:
     ids = [gid.coerce(p, "Product") for p in pids.split(",") if p.strip()]
     if not ids:
         raise TaskError("--pids was empty.")
@@ -416,13 +427,16 @@ def _scan_products(ctx, pids: str, from_id: str, to_id: str,
                     from_available=_available(item.get("fromLevel")),
                     to_level=item.get("toLevel"),
                     label=_clean_label(variant.get("displayName") or node["title"]),
+                    status=node.get("status"),
+                    include_archived=include_archived,
                 ))
 
     return moves[:limit] if limit else moves
 
 
 def _build_move(*, item: dict, from_available: int, to_level: dict | None,
-                label: str) -> Move:
+                label: str, status: str | None = None,
+                include_archived: bool = True) -> Move:
     move = Move(
         item_id=item["id"],
         label=label,
@@ -434,7 +448,11 @@ def _build_move(*, item: dict, from_available: int, to_level: dict | None,
         # adjusting it would fail, so it needs inventoryActivate first.
         needs_activation=to_level is None,
     )
-    if not item.get("tracked"):
+    # Archived first: an archived product with stock is the case worth naming,
+    # and reporting it as "nothing at source" would hide why it was left behind.
+    if not include_archived and inventory.is_archived(status):
+        move.skipped = "product archived"
+    elif not item.get("tracked"):
         move.skipped = "inventory not tracked"
     elif from_available <= 0:
         move.skipped = "nothing at source"

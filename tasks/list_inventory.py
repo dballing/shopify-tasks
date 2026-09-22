@@ -71,8 +71,8 @@ _VARIANT_FIELDS = """
 """
 
 SCAN_ALL_QUERY = """
-query ListInventory($first: Int!, $after: String, $variants: Int!) {
-  products(first: $first, after: $after) {
+query ListInventory($first: Int!, $after: String, $variants: Int!, $query: String) {
+  products(first: $first, after: $after, query: $query) {
     nodes {
       id
       title
@@ -135,6 +135,9 @@ def add_arguments(parser):
                         help="only products with inventory tracking off")
     parser.add_argument("--sku", action="store_true",
                         help="add a SKU column (single-variant products only)")
+    parser.add_argument("--include-archived", action="store_true",
+                        help="also show archived products (hidden by default, "
+                             "since archiving is how you put something out of sight)")
     parser.add_argument("--limit", type=int, metavar="N",
                         help="stop after N products")
 
@@ -154,9 +157,11 @@ def run(ctx, args):
     stock = _read_levels(ctx, locations)
 
     if args.pids:
-        rows = _scan_products(ctx, args.pids, stock)
+        rows = _scan_products(ctx, args.pids, stock,
+                              include_archived=args.include_archived)
     else:
-        rows = _scan_all(ctx, stock, limit=args.limit)
+        rows = _scan_all(ctx, stock, limit=args.limit,
+                         include_archived=args.include_archived)
 
     rows = _filter(rows, locations, args)
     rows.sort(key=lambda r: r.title.lower())
@@ -263,11 +268,18 @@ def _read_levels(ctx, locations: list[dict]) -> dict[str, dict[str, int]]:
     return stock
 
 
-def _scan_all(ctx, stock: dict, *, limit: int | None) -> list[Row]:
+def _scan_all(ctx, stock: dict, *, limit: int | None,
+              include_archived: bool) -> list[Row]:
+    # Filter server-side here: this query is product-first, so excluding
+    # archived ones means fewer pages rather than fetching and discarding.
+    # move-inventory scans location-first and cannot do the same, so it filters
+    # in Python -- the two paths agree on the outcome, not the mechanism.
+    search = None if include_archived else inventory.EXCLUDE_ARCHIVED_QUERY
     progress = output.Progress("reading products")
     rows = []
     for node in ctx.paginate(SCAN_ALL_QUERY, "products",
-                             variables={"variants": VARIANTS_PER_PRODUCT},
+                             variables={"variants": VARIANTS_PER_PRODUCT,
+                                        "query": search},
                              page_size=PRODUCT_PAGE, max_items=limit):
         progress.tick()
         rows.append(_to_row(ctx, node, stock))
@@ -275,7 +287,8 @@ def _scan_all(ctx, stock: dict, *, limit: int | None) -> list[Row]:
     return rows
 
 
-def _scan_products(ctx, pids: str, stock: dict) -> list[Row]:
+def _scan_products(ctx, pids: str, stock: dict, *,
+                   include_archived: bool) -> list[Row]:
     ids = [gid.coerce(p, "Product") for p in pids.split(",") if p.strip()]
     if not ids:
         raise TaskError("--pids was empty.")
@@ -287,6 +300,14 @@ def _scan_products(ctx, pids: str, stock: dict) -> list[Row]:
         for requested, node in zip(chunk, data["nodes"]):
             if node is None:
                 ctx.log.warning("No such product: %s", gid.numeric(requested))
+                continue
+            # nodes(ids:) takes no query argument, so this path filters here.
+            # Naming the product is worth it: asking for one by id and getting
+            # nothing back is otherwise indistinguishable from a bad id.
+            if not include_archived and inventory.is_archived(node.get("status")):
+                ctx.log.warning("Skipping archived product %r "
+                                "(use --include-archived to show it)",
+                                node["title"])
                 continue
             rows.append(_to_row(ctx, node, stock))
     return rows
@@ -338,6 +359,10 @@ def _filter(rows: list[Row], locations: list[dict], args) -> list[Row]:
 # ---------------------------------------------------------------------------
 
 def _print_table(rows: list[Row], locations: list[dict], *, show_sku: bool) -> None:
+    # Only worth a column when something is actually non-active -- otherwise it
+    # is an empty column on every row. Covers draft and unlisted too, not just
+    # archived, since those are equally invisible on the storefront.
+    show_status = any(inventory.status_label(r.status) for r in rows)
     # Truncate long location names to keep columns narrow, but only as much as
     # is needed to stay distinct.
     headers = _short_names([l["name"] for l in locations])
@@ -346,6 +371,8 @@ def _print_table(rows: list[Row], locations: list[dict], *, show_sku: bool) -> N
     for row in rows:
         entry = {"product": row.title[:38], "var": row.variants,
                  "tracked": "yes" if row.tracked else "no"}
+        if show_status:
+            entry["status"] = inventory.status_label(row.status)
         if show_sku:
             entry["sku"] = (row.skus[0] if len(row.skus) == 1 else "")[:16]
         for loc, header in zip(locations, headers):
@@ -364,7 +391,9 @@ def _short_names(names: list[str], width: int = 16) -> list[str]:
 
 def _print_summary(rows: list[Row], locations: list[dict]) -> None:
     variants = sum(r.variants for r in rows)
-    print(f"\n{len(rows)} product(s), {variants} variant(s), "
+    archived = sum(1 for r in rows if inventory.is_archived(r.status))
+    note = f", {archived} archived" if archived else ""
+    print(f"\n{len(rows)} product(s){note}, {variants} variant(s), "
           f"{sum(r.total for r in rows)} unit(s)")
 
     for loc in locations:

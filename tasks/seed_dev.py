@@ -43,6 +43,12 @@ FAIR = "Craft Fair Inventory"
 DEFAULT_OPTION = inventory.DEFAULT_OPTION
 DEFAULT_OPTION_VALUE = inventory.DEFAULT_OPTION_VALUE
 
+# Every Nth synthetic product is archived. Archiving is how a merchant puts
+# something out of sight, and the other tasks skip archived products by default
+# -- so the rehearsal store needs some, including one still holding stock, or
+# that filter is never exercised.
+ARCHIVE_EVERY = 11
+
 # Fixed so --reset reproduces the same store every time. A rehearsal you can't
 # repeat is a rehearsal you can't trust.
 SEED = 20260922
@@ -123,6 +129,7 @@ class SeedProduct:
     product_type: str = "Beads"
     vendor: str = "Seed Data"
     tags: list[str] = field(default_factory=lambda: ["seed-data"])
+    status: str = "ACTIVE"
 
     @property
     def total(self) -> int:
@@ -262,7 +269,9 @@ def _generate(count: int) -> list[SeedProduct]:
     for index in range(count):
         colour = _COLOURS[index % len(_COLOURS)]
         kind = _KINDS[(index // len(_COLOURS)) % len(_KINDS)]
-        title = f"{colour} {kind} {index + 1:02d}"
+        archived = index % ARCHIVE_EVERY == ARCHIVE_EVERY - 1
+        title = f"{colour} {kind} {index + 1:02d}" + (" (archived)" if archived else "")
+        status = "ARCHIVED" if archived else "ACTIVE"
         sku_base = f"SEED-{index + 1:03d}"
 
         # Untracked: no quantities exist, so inventory tasks must skip it.
@@ -271,6 +280,7 @@ def _generate(count: int) -> list[SeedProduct]:
                 title=f"{title} (untracked)",
                 options=[],
                 variants=[SeedVariant([], "4.00", sku_base, tracked=False)],
+                status=status,
             ))
             continue
 
@@ -300,7 +310,8 @@ def _generate(count: int) -> list[SeedProduct]:
                 ))
             products.append(SeedProduct(title=title,
                                         options=[("Size", list(values))],
-                                        variants=variants))
+                                        variants=variants,
+                                        status=status))
             continue
 
         # Single variant, cycling through the location permutations.
@@ -325,6 +336,7 @@ def _generate(count: int) -> list[SeedProduct]:
             options=[],
             variants=[SeedVariant([], f"{3 + pattern}.25", sku_base,
                                   tracked=True, quantities=quantities)],
+            status=status,
         ))
 
     # One deliberately large holding, so a move crosses the 50-item batch
@@ -395,6 +407,10 @@ def _from_source(node: dict) -> SeedProduct | None:
         product_type=node.get("productType") or "",
         vendor=node.get("vendor") or "",
         tags=list(node.get("tags") or []) + ["cloned"],
+        # Carried deliberately. A clone that silently activated every archived
+        # product would misrepresent the catalogue and, worse, hide the case
+        # the other tasks now have to filter.
+        status=node.get("status") or "ACTIVE",
     )
 
 
@@ -438,7 +454,7 @@ def _to_input(product: SeedProduct, locations: dict[str, str]) -> dict:
 
     payload: dict = {
         "title": product.title,
-        "status": "ACTIVE",
+        "status": product.status,
         "variants": variants,
         "tags": product.tags,
         "productOptions": [
@@ -495,9 +511,11 @@ def _preview(ctx, products: list[SeedProduct]) -> None:
         return
 
     shown = products[:PREVIEW_ROWS]
+    show_status = any(inventory.status_label(p.status) for p in shown)
     rows = [{
         "product": product.title[:38],
         "var": len(product.variants),
+        **({"status": inventory.status_label(product.status)} if show_status else {}),
         "tracked": "yes" if any(v.tracked for v in product.variants) else "no",
         "Home": _cell(product, HOME),
         "Fair": _cell(product, FAIR),

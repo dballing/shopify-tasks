@@ -378,3 +378,48 @@ def test_reader_for_refuses_the_same_store(make_client, write_config, shop):
     client = make_client([], shop_override=replace(shop, domain="acme.myshopify.com"))
     with pytest.raises(TaskError, match="cannot be copied onto itself"):
         make_ctx(client).reader_for("prod")
+
+
+# ---------------------------------------------------------------------------
+# Archived products
+# ---------------------------------------------------------------------------
+
+def test_generation_includes_archived_products():
+    """The other tasks now skip archived products by default, so the rehearsal
+    store needs some or that filter is never exercised."""
+    archived = [p for p in sd._generate(30) if p.status == "ARCHIVED"]
+    assert archived, "no archived products generated"
+
+
+def test_at_least_one_archived_product_still_holds_stock():
+    """The case that matters: an archived product with stock would be moved by
+    a scan that didn't filter. An empty one proves nothing."""
+    archived = [p for p in sd._generate(30) if p.status == "ARCHIVED"]
+    assert any(p.total > 0 for p in archived)
+
+
+def test_most_products_are_active():
+    products = sd._generate(30)
+    active = [p for p in products if p.status == "ACTIVE"]
+    assert len(active) > len(products) * 0.8
+
+
+def test_archived_status_reaches_the_product_input():
+    payload = sd._to_input(
+        sd.SeedProduct(title="X", options=[], status="ARCHIVED",
+                       variants=[sd.SeedVariant([], "1.00", "A", tracked=True,
+                                                quantities={sd.HOME: 2})]),
+        LOC_IDS)
+    assert payload["status"] == "ARCHIVED"
+
+
+def test_clone_preserves_archived_status():
+    """Silently activating every archived product would misrepresent the
+    catalogue and hide the case the other tasks have to filter."""
+    node = {**SOURCE_NODE, "status": "ARCHIVED"}
+    assert sd._from_source(node).status == "ARCHIVED"
+
+
+def test_clone_defaults_to_active_when_status_is_missing():
+    node = {k: v for k, v in SOURCE_NODE.items() if k != "status"}
+    assert sd._from_source(node).status == "ACTIVE"

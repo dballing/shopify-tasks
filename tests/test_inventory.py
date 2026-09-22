@@ -117,3 +117,40 @@ def test_legend_describes_both_markers():
     text = "\n".join(inventory.legend())
     assert inventory.NOT_ACTIVATED in text
     assert inventory.PARTIAL_MARKER in text
+
+
+# ---------------------------------------------------------------------------
+# Archived
+# ---------------------------------------------------------------------------
+
+def test_is_archived_is_case_insensitive():
+    assert inventory.is_archived("ARCHIVED")
+    assert inventory.is_archived("archived")
+
+
+def test_other_statuses_are_not_archived():
+    for status in ("ACTIVE", "DRAFT", "UNLISTED", "", None):
+        assert not inventory.is_archived(status)
+
+
+def test_draft_products_are_not_treated_as_archived():
+    """Only archiving means 'put this out of sight'. A draft is unfinished, not
+    retired, and hiding it would be a different decision than the one asked for."""
+    assert not inventory.is_archived("DRAFT")
+
+
+def test_exclude_query_is_a_negation_shopify_understands():
+    assert inventory.EXCLUDE_ARCHIVED_QUERY == "-status:archived"
+
+
+def test_active_status_renders_blank():
+    """Nearly every row is active; labelling them all would bury the few that
+    are not."""
+    assert inventory.status_label("ACTIVE") == ""
+    assert inventory.status_label(None) == ""
+
+
+def test_non_active_statuses_are_labelled():
+    assert inventory.status_label("ARCHIVED") == "archived"
+    assert inventory.status_label("DRAFT") == "draft"
+    assert inventory.status_label("UNLISTED") == "unlisted"

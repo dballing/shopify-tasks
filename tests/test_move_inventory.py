@@ -369,7 +369,8 @@ def test_dry_run_writes_nothing(make_client, capsys):
             "item": {"id": "gid://shopify/InventoryItem/1", "sku": "B-1",
                      "tracked": True,
                      "variant": {"id": "v", "displayName": "Bead - Blue",
-                                 "product": {"id": "p", "title": "Bead"}},
+                                 "product": {"id": "p", "title": "Bead",
+                                             "status": "ACTIVE"}},
                      "toLevel": level(1)},
         }],
         "pageInfo": {"hasNextPage": False, "endCursor": None},
@@ -380,10 +381,64 @@ def test_dry_run_writes_nothing(make_client, capsys):
 
     args = type("A", (), {"from_location": "Home", "to_location": "Craft Fair",
                           "all": True, "pids": None, "reason": "movement_created",
-                          "limit": None, "no_activate": False})()
+                          "limit": None, "no_activate": False,
+                          "include_archived": False})()
     mi.run(ctx, args)
 
     assert len(client.session.requests) == 2, "reads only; nothing written"
     assert ctx.writes_performed == 0 and ctx.writes_skipped == 1
     out = capsys.readouterr().out
     assert "2 -> 0" in out and "1 -> 3" in out    # the additive preview
+
+
+# ---------------------------------------------------------------------------
+# Archived products
+# ---------------------------------------------------------------------------
+
+def archived_item(available=3):
+    """An archived product's inventory item, as the location-first scan sees it."""
+    return {
+        "id": "gid://shopify/InventoryItem/9", "sku": "ARCH-1", "tracked": True,
+        "variant": {"id": "v", "displayName": "Retired Bead",
+                    "product": {"id": "p", "title": "Retired Bead",
+                                "status": "ARCHIVED"}},
+    }
+
+
+def test_archived_products_are_skipped_by_default():
+    """An archived product keeps its inventory levels, so the location-first
+    scan still sees it -- filtering is a deliberate act."""
+    built = mi._build_move(item=archived_item(), from_available=3, to_level=level(0),
+                           label="Retired Bead", status="ARCHIVED",
+                           include_archived=False)
+    assert built.skipped == "product archived"
+
+
+def test_archived_products_move_when_asked():
+    built = mi._build_move(item=archived_item(), from_available=3, to_level=level(0),
+                           label="Retired Bead", status="ARCHIVED",
+                           include_archived=True)
+    assert built.skipped is None and built.qty == 3
+
+
+def test_archived_takes_priority_over_other_skip_reasons():
+    """Reporting an archived product as 'nothing at source' would hide why it
+    was left behind, and the two have different fixes."""
+    built = mi._build_move(item=archived_item(), from_available=0, to_level=level(0),
+                           label="x", status="ARCHIVED", include_archived=False)
+    assert built.skipped == "product archived"
+
+
+def test_active_products_are_unaffected_by_the_filter():
+    built = mi._build_move(item={"id": "i", "tracked": True}, from_available=2,
+                           to_level=level(0), label="x", status="ACTIVE",
+                           include_archived=False)
+    assert built.skipped is None
+
+
+def test_draft_products_still_move():
+    """Only archiving means 'out of sight'; a draft is merely unfinished."""
+    built = mi._build_move(item={"id": "i", "tracked": True}, from_available=2,
+                           to_level=level(0), label="x", status="DRAFT",
+                           include_archived=False)
+    assert built.skipped is None

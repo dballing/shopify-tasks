@@ -20,6 +20,31 @@ from __future__ import annotations
 # location will ship them and so must not be moved.
 AVAILABLE = "available"
 
+# Archiving a product is how a merchant puts it out of sight, so tasks exclude
+# archived products unless asked otherwise. They are not inert, though: an
+# archived product keeps its inventory levels and still appears in a location's
+# inventoryLevels connection, so a location-first scan sees it and would move
+# its stock. Filtering is a deliberate act, not something Shopify does for you.
+ARCHIVED = "ARCHIVED"
+
+# Server-side filter for a products(query:) argument.
+EXCLUDE_ARCHIVED_QUERY = "-status:archived"
+
+
+def is_archived(status: str | None) -> bool:
+    return (status or "").upper() == ARCHIVED
+
+
+def status_label(status: str | None) -> str:
+    """How a product status prints in a table.
+
+    Blank for ACTIVE: the overwhelming majority of rows are active, and
+    labelling every one of them would be noise that buries the few that differ.
+    """
+    text = (status or "").upper()
+    return "" if text in ("", "ACTIVE") else text.lower()
+
+
 # Printed where an item is not stocked at a location at all.
 NOT_ACTIVATED = "--"
 

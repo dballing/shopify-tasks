@@ -140,7 +140,7 @@ def test_never_activated_renders_as_the_marker():
 
 def args(**kw):
     defaults = dict(pids=None, at=None, with_stock=False, needs_activation=False,
-                    untracked=False, sku=False, limit=None)
+                    untracked=False, sku=False, limit=None, include_archived=False)
     defaults.update(kw)
     return type("A", (), defaults)()
 

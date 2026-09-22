@@ -197,24 +197,64 @@ def test_state_moved_is_available_not_on_hand(make_client):
     assert client.session.requests[0]["payload"]["variables"]["input"]["name"] == "available"
 
 
+# The exact userError Shopify returns for a lost compare-and-swap, captured
+# from a live run against a development store. Using the real shape matters:
+# the whole partial-retry path keys off that field-path index, and an invented
+# fixture would prove nothing about the real one.
+STALE_MESSAGE = ("The changeFromQuantity argument no longer matches the "
+                 "persisted quantity.")
+
+
+def stale_error(change_index: int) -> dict:
+    return {"field": ["input", "changes", str(change_index), "changeFromQuantity"],
+            "message": STALE_MESSAGE,
+            "code": mi.STALE_CODE}
+
+
 def test_conflicting_item_is_dropped_and_the_rest_retried(make_client):
     """A sale landing mid-run must cost one item, not the whole run."""
     a, b, c = move(), move(item_id="B", label="B"), move(item_id="C", label="C")
     client = make_client([
         # changes[2]/[3] are item index 1 -> B loses the compare-and-swap.
-        gql({"inventoryAdjustQuantities": {"userErrors": [
-            {"field": ["input", "changes", "2", "changeFromQuantity"],
-             "message": "quantity changed", "code": "STALE"}]}}),
+        gql({"inventoryAdjustQuantities": {"userErrors": [stale_error(2)]}}),
         gql({"inventoryAdjustQuantities": {"userErrors": []}}),
     ], writes_enabled=True)
 
     mi._adjust_batch(make_ctx(client), [a, b, c], HOME["id"], FAIR["id"], reason="r")
 
-    assert b.failed == "quantity changed"
+    assert b.failed == STALE_MESSAGE and b.stale is True
     assert a.failed is None and c.failed is None
     retried = client.session.requests[1]["payload"]["variables"]["input"]["changes"]
     assert [ch["inventoryItemId"] for ch in retried] == [
         a.item_id, a.item_id, "C", "C"]
+
+
+def test_staleness_is_read_from_the_code_not_the_message(make_client):
+    """The real message contains none of the words you'd grep for -- no
+    'changed', no 'conflict' -- so only the code identifies it."""
+    assert "chang" not in STALE_MESSAGE.lower().replace("changefromquantity", "")
+
+    message, stale = mi._error_for([stale_error(0)], 0)
+    assert stale is True and message == STALE_MESSAGE
+
+    _, stale = mi._error_for(
+        [{"field": ["input", "changes", "0"], "message": "nope", "code": "OTHER"}], 0)
+    assert stale is False
+
+
+def test_non_stale_failures_are_not_flagged_as_concurrency(make_client):
+    """An activation failure told to 're-run to pick them up' sends you hunting
+    a sale that never happened."""
+    a = move()
+    client = make_client([
+        gql({"inventoryAdjustQuantities": {"userErrors": [
+            {"field": ["input", "changes", "0"], "message": "invalid reason",
+             "code": "INVALID"}]}}),
+        gql({"inventoryAdjustQuantities": {"userErrors": []}}),
+    ], writes_enabled=True)
+    mi._adjust_batch(make_ctx(client), [a, move(item_id="B")],
+                     HOME["id"], FAIR["id"], reason="bogus")
+    assert a.failed == "invalid reason" and a.stale is False
 
 
 def test_retry_uses_a_fresh_idempotency_key(make_client):
@@ -222,7 +262,7 @@ def test_retry_uses_a_fresh_idempotency_key(make_client):
     a, b = move(), move(item_id="B")
     client = make_client([
         gql({"inventoryAdjustQuantities": {"userErrors": [
-            {"field": ["input", "changes", "2"], "message": "stale"}]}}),
+            stale_error(2)]}}),
         gql({"inventoryAdjustQuantities": {"userErrors": []}}),
     ], writes_enabled=True)
     mi._adjust_batch(make_ctx(client), [a, b], HOME["id"], FAIR["id"], reason="r")
@@ -257,7 +297,7 @@ def test_retries_are_bounded(make_client):
     moves = [move(item_id=str(i)) for i in range(5)]
     client = make_client([
         gql({"inventoryAdjustQuantities": {"userErrors": [
-            {"field": ["input", "changes", "0"], "message": "stale"}]}})
+            stale_error(0)]}})
     ] * 8, writes_enabled=True)
     mi._adjust_batch(make_ctx(client), moves, HOME["id"], FAIR["id"], reason="r")
     assert len(client.session.requests) <= 4

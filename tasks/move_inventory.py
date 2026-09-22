@@ -15,9 +15,15 @@ units are promised and must stay at the location that will ship them. Adjusting
 
 **Concurrency.** Every adjustment carries ``changeFromQuantity``, the quantity
 we read during the scan. If a sale lands between the scan and the write,
-Shopify rejects that entry rather than applying a delta to a number that moved
-underneath us. Rejected items are reported and the rest of the batch still
-goes through.
+Shopify rejects that entry with ``CHANGE_FROM_QUANTITY_STALE`` rather than
+applying a delta to a number that moved underneath us. Rejected items are
+reported and the rest of the batch still goes through.
+
+Note that ``changeFromQuantity`` is **required**, despite introspection typing
+it as a nullable ``Int``: omitting it fails the whole mutation with
+"InventoryChangeInput must include the following argument". So this is not an
+optional safety belt that could be switched off -- the API has no
+last-write-wins mode.
 
 **Fulfillment.** Items are activated at the destination (``inventoryActivate``)
 so the quantity is genuinely stocked there rather than stranded. Location-level
@@ -45,6 +51,10 @@ STATE = "available"
 # vocabulary renders as a readable label in the admin; an invented value comes
 # back as a userError.
 DEFAULT_REASON = "movement_created"
+
+# Shopify's code for a lost compare-and-swap: the quantity we read during the
+# scan no longer matches what is stored, i.e. something changed underneath us.
+STALE_CODE = "CHANGE_FROM_QUANTITY_STALE"
 
 # Item pairs per adjustment call. Each pair is two changes, so 50 is 100 changes
 # -- comfortably inside query cost limits while keeping a few hundred items to a
@@ -161,6 +171,9 @@ class Move:
     needs_activation: bool
     skipped: str | None = None    # why this one won't move, if it won't
     failed: str | None = dc_field(default=None)
+    # True when the failure was specifically a lost compare-and-swap, which is
+    # the one kind worth re-running for -- the quantity simply moved on.
+    stale: bool = dc_field(default=False)
 
     @property
     def new_from(self) -> int:
@@ -266,7 +279,7 @@ def run(ctx, args):
         # Only blame concurrency when concurrency was actually the problem --
         # an activation failure told to "re-run to pick them up" sends you
         # looking for a phantom sale instead of at the real error above.
-        if any(m.failed and "changed" in m.failed.lower() for m in failed):
+        if any(m.stale for m in failed):
             ctx.log.warning(
                 "Some quantities changed mid-run; re-running will pick those up.")
         else:
@@ -550,7 +563,7 @@ def _adjust_batch(ctx, batch: list[Move], from_id: str, to_id: str,
 
     for index in sorted(bad):
         move = batch[index]
-        move.failed = _error_for(errors, index, changes)
+        move.failed, move.stale = _error_for(errors, index)
 
     remaining = [m for i, m in enumerate(batch) if i not in bad]
     if remaining:
@@ -577,13 +590,19 @@ def _failed_indices(errors: list[dict], n_changes: int) -> set[int]:
     return found
 
 
-def _error_for(errors: list[dict], item_index: int, changes: list) -> str:
-    """The message belonging to one item, falling back to all of them."""
+def _error_for(errors: list[dict], item_index: int) -> tuple[str, bool]:
+    """(message, was-it-a-stale-quantity) for one item, else all the messages.
+
+    The staleness flag comes from the error code rather than the prose: the
+    message reads "The changeFromQuantity argument no longer matches the
+    persisted quantity", which contains none of the words you would grep for.
+    """
     for err in errors:
         for part in err.get("field") or []:
             if str(part).isdigit() and int(str(part)) // 2 == item_index:
-                return err.get("message", "rejected")
-    return "; ".join(e.get("message", "?") for e in errors)
+                return (err.get("message", "rejected"),
+                        err.get("code") == STALE_CODE)
+    return "; ".join(e.get("message", "?") for e in errors), False
 
 
 # ---------------------------------------------------------------------------

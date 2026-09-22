@@ -274,15 +274,21 @@ def _generate(count: int) -> list[SeedProduct]:
             ))
             continue
 
-        # Multi-variant with uneven stock. The last size is deliberately left
-        # unactivated at the fair, so one product exercises both the activate
-        # and the no-activate paths within a single move.
+        # Multi-variant with uneven stock, where one size is missing from one
+        # location so a single move exercises both the activate and the
+        # no-activate path. Which location alternates: a size can be absent
+        # from the fair (never packed) or absent from home (debuted at a show
+        # and never stocked at home), and both need covering -- otherwise the
+        # partial-activation case only ever appears in one direction.
         if index % 5 == 4:
             values = _SIZES
+            odd_one_out = HOME if (index // 5) % 2 else FAIR
             variants = []
             for i, size in enumerate(values):
                 if i == len(values) - 1:
-                    quantities = {HOME: rng.randint(1, 4)}
+                    # Present only at the location that isn't sitting out.
+                    other = FAIR if odd_one_out is HOME else HOME
+                    quantities = {other: rng.randint(1, 4)}
                 else:
                     quantities = {HOME: rng.randint(0, 6), FAIR: rng.randint(0, 2)}
                 variants.append(SeedVariant(
@@ -473,20 +479,59 @@ def _wipe(ctx) -> None:
 # Output
 # ---------------------------------------------------------------------------
 
+PREVIEW_ROWS = 40
+
+# A location absent from a variant's quantities is never activated there, which
+# is a different state from being stocked with nothing. Both would otherwise
+# print as "0" -- the conflation that let the activation path go untested.
+NOT_ACTIVATED = "--"
+
+
+def _cell(product: SeedProduct, location: str) -> str:
+    """One location's column for a product, distinguishing empty from absent.
+
+        6     stocked, six units
+        0     stocked, empty
+        --    not activated here at all
+        4*    stocked, but some variants are not activated here
+    """
+    present = [v for v in product.variants if location in v.quantities]
+    if not present:
+        return NOT_ACTIVATED
+    total = sum(v.quantities[location] for v in present)
+    partial = "*" if len(present) != len(product.variants) else ""
+    return f"{total}{partial}"
+
+
 def _preview(ctx, products: list[SeedProduct]) -> None:
     if ctx.json_output:
         return
-    rows = []
-    for product in products[:12]:
-        rows.append({
-            "product": product.title[:38],
-            "variants": len(product.variants),
-            "tracked": "no" if not any(v.tracked for v in product.variants) else "yes",
-            HOME: sum(v.quantities.get(HOME, 0) for v in product.variants),
-            FAIR[:10]: sum(v.quantities.get(FAIR, 0) for v in product.variants),
-        })
+
+    shown = products[:PREVIEW_ROWS]
+    rows = [{
+        "product": product.title[:38],
+        "var": len(product.variants),
+        "tracked": "yes" if any(v.tracked for v in product.variants) else "no",
+        "Home": _cell(product, HOME),
+        "Fair": _cell(product, FAIR),
+    } for product in shown]
+
     print(output.format_table(rows))
-    if len(products) > 12:
-        print(f"... and {len(products) - 12} more")
+    if len(products) > PREVIEW_ROWS:
+        print(f"... and {len(products) - PREVIEW_ROWS} more")
+
+    def _needing_activation(destination: str) -> int:
+        return sum(1 for p in products for v in p.variants
+                   if v.tracked and destination not in v.quantities)
+
     print(f"\n{len(products)} product(s), "
-          f"{sum(p.total for p in products)} unit(s) of stock\n")
+          f"{sum(p.total for p in products)} unit(s) of stock")
+    print(f"  {NOT_ACTIVATED} = not activated at that location (a move must "
+          f"activate it first)")
+    print(f"   * = only some variants activated there")
+    # Both directions: stock goes out to a fair and comes back, and a variant
+    # that debuted at a show needs activating at home on the return leg.
+    print(f"  {_needing_activation(FAIR)} variant(s) need activating on a "
+          f"{HOME} -> {FAIR} move")
+    print(f"  {_needing_activation(HOME)} variant(s) need activating on a "
+          f"{FAIR} -> {HOME} move\n")

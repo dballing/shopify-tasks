@@ -139,16 +139,31 @@ def test_absent_location_is_distinct_from_zero():
         "need an item not stocked at the fair at all"
 
 
-def test_a_multi_variant_product_mixes_activation_states():
-    """One product should exercise both paths in a single move."""
-    products = sd._generate(30)
-    mixed = [
+def _partially_missing(products, location):
+    """Multi-variant products where only some variants exist at `location`."""
+    return [
         p for p in products
         if len(p.variants) > 1
-        and any(sd.FAIR in v.quantities for v in p.variants)
-        and any(sd.FAIR not in v.quantities for v in p.variants)
+        and any(location in v.quantities for v in p.variants)
+        and any(location not in v.quantities for v in p.variants)
     ]
-    assert mixed, "no multi-variant product mixes activated and unactivated variants"
+
+
+def test_a_multi_variant_product_mixes_activation_states():
+    """One product should exercise both paths in a single move."""
+    assert _partially_missing(sd._generate(30), sd.FAIR), \
+        "no multi-variant product mixes activated and unactivated variants"
+
+
+def test_partial_activation_occurs_in_both_directions():
+    """A size can be missing from the fair (never packed) or from home (debuted
+    at a show and never stocked at home). Covering only the first leaves the
+    reverse move's partial-activation case untested."""
+    products = sd._generate(30)
+    assert _partially_missing(products, sd.FAIR), \
+        "need a product with a variant not stocked at the fair"
+    assert _partially_missing(products, sd.HOME), \
+        "need a product with a variant not stocked at home"
 
 
 def test_unactivated_locations_are_omitted_from_the_input():
@@ -159,6 +174,44 @@ def test_unactivated_locations_are_omitted_from_the_input():
                                  quantities={sd.HOME: 3})])
     quantities = sd._to_input(product, LOC_IDS)["variants"][0]["inventoryQuantities"]
     assert [q["locationId"] for q in quantities] == [LOC_IDS[sd.HOME]]
+
+
+def test_preview_distinguishes_empty_from_not_activated():
+    """Both are 'no stock there', but only one needs activating -- and printing
+    both as 0 is what hid the activation path in the first place."""
+    stocked_empty = sd.SeedProduct(
+        title="A", options=[],
+        variants=[sd.SeedVariant([], "1.00", "A", tracked=True,
+                                 quantities={sd.HOME: 3, sd.FAIR: 0})])
+    not_activated = sd.SeedProduct(
+        title="B", options=[],
+        variants=[sd.SeedVariant([], "1.00", "B", tracked=True,
+                                 quantities={sd.HOME: 3})])
+
+    assert sd._cell(stocked_empty, sd.FAIR) == "0"
+    assert sd._cell(not_activated, sd.FAIR) == sd.NOT_ACTIVATED
+
+
+def test_preview_flags_partially_activated_products():
+    """A multi-variant product where only some variants exist at a location."""
+    product = sd.SeedProduct(
+        title="M", options=[("Size", ["6mm", "8mm"])],
+        variants=[
+            sd.SeedVariant([("Size", "6mm")], "1.00", "M-6", tracked=True,
+                           quantities={sd.HOME: 2, sd.FAIR: 1}),
+            sd.SeedVariant([("Size", "8mm")], "1.00", "M-8", tracked=True,
+                           quantities={sd.HOME: 3}),
+        ])
+    assert sd._cell(product, sd.FAIR) == "1*"
+    assert sd._cell(product, sd.HOME) == "5"      # all variants, no marker
+
+
+def test_untracked_products_show_as_not_activated_everywhere():
+    product = sd.SeedProduct(
+        title="U", options=[],
+        variants=[sd.SeedVariant([], "1.00", "U", tracked=False)])
+    assert sd._cell(product, sd.HOME) == sd.NOT_ACTIVATED
+    assert sd._cell(product, sd.FAIR) == sd.NOT_ACTIVATED
 
 
 def test_generation_includes_a_large_holding():

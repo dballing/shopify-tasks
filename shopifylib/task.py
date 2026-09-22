@@ -137,6 +137,9 @@ class TaskContext:
     # directly comparable to the real run that follows it.
     writes_performed: int = 0
     writes_skipped: int = 0
+    # Mutations that returned cleanly but reported userErrors, i.e. changed
+    # nothing. Only reachable via check_errors=False.
+    writes_failed: int = 0
 
     # -- reads -------------------------------------------------------------
 
@@ -211,7 +214,15 @@ class TaskContext:
             document, variables, field=field, operation_name=operation_name,
             check_errors=check_errors,
         )
-        self.writes_performed += 1
+        # With check_errors=False a mutation can return cleanly having changed
+        # nothing, so counting every call as a change made the run summary
+        # contradict the task's own report ("31 applied" against "created 6").
+        # Inspecting the payload keeps the counter honest without raising.
+        from .client import collect_user_errors
+        if not check_errors and collect_user_errors(result):
+            self.writes_failed += 1
+        else:
+            self.writes_performed += 1
         return result
 
     # -- convenience -------------------------------------------------------
@@ -274,6 +285,7 @@ class TaskContext:
             "dry_run": self.dry_run,
             "writes_performed": self.writes_performed,
             "writes_skipped": self.writes_skipped,
+            "writes_failed": self.writes_failed,
             "api_requests": self.client.request_count,
             "throttle": self.client.budget.snapshot(),
         }

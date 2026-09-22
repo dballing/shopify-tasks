@@ -234,11 +234,14 @@ def _report(ctx: TaskContext, log: logging.Logger, dry_run: bool) -> None:
             "Re-run with --commit to apply.",
             summary["writes_skipped"], summary["api_requests"],
         )
-    elif summary["writes_performed"]:
+    elif summary["writes_performed"] or summary.get("writes_failed"):
         log.info(
             "Done: %d change(s) applied, %d API request(s).",
             summary["writes_performed"], summary["api_requests"],
         )
+        if summary.get("writes_failed"):
+            log.warning("%d mutation(s) reported errors and changed nothing.",
+                        summary["writes_failed"])
     else:
         log.info("Done: %d API request(s).", summary["api_requests"])
 

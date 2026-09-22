@@ -38,6 +38,11 @@ from shopifylib.task import task
 HOME = "Home"
 FAIR = "Craft Fair Inventory"
 
+# Shopify's representation of a product with no real options. Not a placeholder
+# to be tidied away: productSet requires an option whenever variants are given.
+DEFAULT_OPTION = "Title"
+DEFAULT_OPTION_VALUE = "Default Title"
+
 # Fixed so --reset reproduces the same store every time. A rehearsal you can't
 # repeat is a rehearsal you can't trust.
 SEED = 20260922
@@ -335,16 +340,17 @@ def _clone_source(ctx, source_id: str, *, limit: int | None) -> list[SeedProduct
 
 
 def _from_source(node: dict) -> SeedProduct | None:
+    # Keep the "Title"/"Default Title" option exactly as the source reports it.
+    # It looks like a placeholder worth dropping, but it is the real structure
+    # of an optionless product and productSet requires it; stripping it makes
+    # every single-variant clone fail.
     options = [(o["name"], [v["name"] for v in o.get("optionValues") or []])
                for o in node.get("options") or []]
-    # Shopify's placeholder option on a product with no real variants; sending
-    # it back would create a literal "Title: Default Title" option.
-    options = [(name, values) for name, values in options if name != "Title"]
 
     variants = []
     for variant in (node.get("variants") or {}).get("nodes") or []:
-        selected = [(o["name"], o["value"]) for o in variant.get("selectedOptions") or []
-                    if o["name"] != "Title"]
+        selected = [(o["name"], o["value"])
+                    for o in variant.get("selectedOptions") or []]
         item = variant.get("inventoryItem") or {}
         quantities: dict[str, int] = {}
         for level in (item.get("inventoryLevels") or {}).get("nodes") or []:
@@ -398,21 +404,33 @@ def _to_input(product: SeedProduct, locations: dict[str, str]) -> dict:
             ]
         variants.append(entry)
 
+    # productSet rejects variants unless productOptions is supplied, even for a
+    # product with no real options ("Product options input is required when
+    # updating variants"). Shopify's own representation of an optionless product
+    # is a single "Title" option valued "Default Title" -- which is why real
+    # products read as "Coral Melange - Default Title". Synthesize it rather
+    # than treating single-variant products as a special case everywhere else.
+    options = product.options
+    if not options:
+        options = [(DEFAULT_OPTION, [DEFAULT_OPTION_VALUE])]
+        for entry in variants:
+            entry["optionValues"] = [{"optionName": DEFAULT_OPTION,
+                                      "name": DEFAULT_OPTION_VALUE}]
+
     payload: dict = {
         "title": product.title,
         "status": "ACTIVE",
         "variants": variants,
         "tags": product.tags,
+        "productOptions": [
+            {"name": name, "values": [{"name": v} for v in values]}
+            for name, values in options
+        ],
     }
     if product.product_type:
         payload["productType"] = product.product_type
     if product.vendor:
         payload["vendor"] = product.vendor
-    if product.options:
-        payload["productOptions"] = [
-            {"name": name, "values": [{"name": v} for v in values]}
-            for name, values in product.options
-        ]
     return payload
 
 

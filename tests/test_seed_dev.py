@@ -175,12 +175,27 @@ def test_options_become_product_options():
         {"optionName": "Size", "name": "6mm"}]
 
 
-def test_single_variant_products_declare_no_options():
+def test_single_variant_products_get_the_default_title_option():
+    """productSet rejects variants without productOptions -- "Product options
+    input is required when updating variants" -- even when there are no real
+    options. Shopify's own shape for that is Title/Default Title."""
     payload = sd._to_input(
         sd.SeedProduct(title="X", options=[],
                        variants=[sd.SeedVariant([], "1.00", "A", tracked=True)]),
         LOC_IDS)
-    assert "productOptions" not in payload
+    assert payload["productOptions"] == [
+        {"name": "Title", "values": [{"name": "Default Title"}]}]
+    assert payload["variants"][0]["optionValues"] == [
+        {"optionName": "Title", "name": "Default Title"}]
+
+
+def test_every_product_input_carries_options():
+    """The failure this guards cost 25 of 31 products on the first real run."""
+    for product in sd._generate(30):
+        payload = sd._to_input(product, LOC_IDS)
+        assert payload.get("productOptions"), f"{product.title} has no productOptions"
+        for variant in payload["variants"]:
+            assert variant["optionValues"], f"{product.title} variant has no optionValues"
 
 
 # ---------------------------------------------------------------------------
@@ -210,11 +225,22 @@ def test_clone_carries_stock_per_location():
     assert product.variants[0].sku == "CM-1"
 
 
-def test_clone_drops_shopifys_placeholder_option():
-    """Sending 'Title: Default Title' back would create a literal option."""
+def test_clone_keeps_the_default_title_option():
+    """It looks like a placeholder worth dropping, but it is the real structure
+    of an optionless product and productSet requires it. Stripping it made
+    every single-variant clone fail."""
     product = sd._from_source(SOURCE_NODE)
-    assert product.options == []
-    assert product.variants[0].option_values == []
+    assert product.options == [("Title", ["Default Title"])]
+    assert product.variants[0].option_values == [("Title", "Default Title")]
+
+
+def test_cloned_single_variant_products_round_trip():
+    """Source shape -> input shape, without losing the required option."""
+    payload = sd._to_input(sd._from_source(SOURCE_NODE), LOC_IDS)
+    assert payload["productOptions"] == [
+        {"name": "Title", "values": [{"name": "Default Title"}]}]
+    assert payload["variants"][0]["optionValues"] == [
+        {"optionName": "Title", "name": "Default Title"}]
 
 
 def test_clone_tags_its_output():

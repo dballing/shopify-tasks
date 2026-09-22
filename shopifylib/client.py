@@ -397,21 +397,26 @@ class ShopifyClient:
         raise GraphQLError(errors, query=document)
 
 
-def check_user_errors(payload: dict, *, mutation: str | None = None) -> None:
-    """Raise ``UserError`` if a mutation payload reports any.
+def collect_user_errors(payload: dict) -> list[dict]:
+    """Every userError in a mutation payload, without raising.
 
     Shopify names this field inconsistently across mutations -- ``userErrors``
-    is the standard, but several product and inventory mutations return a typed
-    variant (``productVariantsBulkUpdate`` uses ``userErrors``, older ones used
-    ``mediaUserErrors``, and a few carry both). Checking every key that ends in
-    ``UserErrors`` catches all of them without a per-mutation lookup table.
+    is the standard, but several product and media mutations return a typed
+    variant (older ones used ``mediaUserErrors``, and a few carry both).
+    Gathering every key ending in ``UserErrors`` catches all of them without a
+    per-mutation lookup table.
     """
     if not isinstance(payload, dict):
-        return
+        return []
     collected: list[dict] = []
     for key, value in payload.items():
-        if key == "userErrors" or key.endswith("UserErrors"):
-            if value:
-                collected.extend(value)
+        if (key == "userErrors" or key.endswith("UserErrors")) and value:
+            collected.extend(value)
+    return collected
+
+
+def check_user_errors(payload: dict, *, mutation: str | None = None) -> None:
+    """Raise ``UserError`` if a mutation payload reports any."""
+    collected = collect_user_errors(payload)
     if collected:
         raise UserError(collected, mutation=mutation)

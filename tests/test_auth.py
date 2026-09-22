@@ -197,6 +197,45 @@ def test_client_credentials_failure_explains_the_org_constraint():
         auth.client_credentials_grant(shop, session)
 
 
+APP_NOT_INSTALLED_PAGE = (
+    "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n"
+    "  <title>400 - Oauth error app_not_installed</title>\n"
+    "  <style type=\"text/css\">* { border:0; margin:0; padding:0; }</style>\n"
+    "</head><body>...</body></html>"
+)
+
+
+def test_app_not_installed_is_named_and_given_the_right_fix():
+    """Same org is necessary but not sufficient -- the app must be installed
+    too, and that is a different fix from an org mismatch."""
+    shop = make_shop(client_id="cid", client_secret="csec")
+    session = FakeTokenSession([FakeResponse(APP_NOT_INSTALLED_PAGE, status=400)])
+    with pytest.raises(AuthError) as exc:
+        auth.client_credentials_grant(shop, session)
+    text = str(exc.value)
+    assert "never been installed on this store" in text
+    assert "shopify.sh auth --shop prod" in text
+    assert "same organization is not enough" in text.lower()
+
+
+def test_html_error_pages_are_reduced_to_their_title():
+    """Shopify puts the actual error code in <title> and surrounds it with a
+    screenful of CSS; dumping the raw page buries the one useful word."""
+    shop = make_shop(client_id="cid", client_secret="csec")
+    session = FakeTokenSession([FakeResponse(APP_NOT_INSTALLED_PAGE, status=400)])
+    with pytest.raises(AuthError) as exc:
+        auth.client_credentials_grant(shop, session)
+    assert "<style" not in str(exc.value)
+    assert "400 - Oauth error app_not_installed" in str(exc.value)
+
+
+def test_plain_text_errors_pass_through_unchanged():
+    shop = make_shop(client_id="cid", client_secret="csec")
+    session = FakeTokenSession([FakeResponse("invalid_client", status=401)])
+    with pytest.raises(AuthError, match="invalid_client"):
+        auth.client_credentials_grant(shop, session)
+
+
 def test_refresh_failure_points_at_re_authing():
     shop = make_shop(client_id="cid", client_secret="csec")
     session = FakeTokenSession([FakeResponse("bad", status=400)])

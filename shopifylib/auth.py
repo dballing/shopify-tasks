@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import stat
 import threading
 import time
@@ -214,17 +215,44 @@ def _post_token(shop: Shop, payload: dict, session: requests.Session | None = No
         ) from exc
 
 
+# Shopify answers token-endpoint failures with an HTML error page whose <title>
+# carries the actual code, e.g. "400 - Oauth error app_not_installed". Dumping
+# the raw markup buries the one useful word in a screenful of CSS.
+_HTML_TITLE_RE = re.compile(r"<title>\s*(.*?)\s*</title>", re.IGNORECASE | re.DOTALL)
+
+
+def _token_error_detail(response) -> str:
+    """The useful part of a token-endpoint error, HTML page or not."""
+    text = response.text or ""
+    if "<html" in text[:200].lower():
+        match = _HTML_TITLE_RE.search(text)
+        if match:
+            return match.group(1)
+    return text[:300].strip() or f"HTTP {response.status_code}"
+
+
 def _token_error_message(shop: Shop, response, grant_type: str | None) -> str:
-    detail = response.text[:300]
+    detail = _token_error_detail(response)
     base = (f"Token request for {shop.id} ({shop.domain}) failed with "
             f"HTTP {response.status_code}: {detail}")
+
+    # Same organization is necessary but NOT sufficient: the app must also be
+    # installed on that particular store. Shopify reports that as
+    # app_not_installed, which is a different fix from an org mismatch, so
+    # naming it saves a wrong-turn debugging session.
+    if "app_not_installed" in detail:
+        return base + (
+            f"\n\nThe app exists but has never been installed on this store. "
+            f"Being in the same organization is not enough on its own.\n"
+            f"Install it and get a token in one step:\n"
+            f"    ./shopify.sh auth --shop {shop.id}"
+        )
+
     if grant_type == "client_credentials":
-        # By far the most common cause, and the error text does not say it.
         base += (
-            "\n\nThe client credentials grant only works when the app and the store "
-            "belong to the SAME Shopify organization, and the store must appear under "
-            "'Dev stores' in your Dev Dashboard. For a store outside the app's "
-            "organization, use the one-time browser flow instead:\n"
+            "\n\nThe client credentials grant needs the app and the store to be in "
+            "the SAME Shopify organization, with the app installed on that store. "
+            "Either way, the browser flow installs it and issues a token:\n"
             "    ./shopify.sh auth --shop " + shop.id
         )
     elif grant_type == "refresh_token":

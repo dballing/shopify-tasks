@@ -118,6 +118,49 @@ def test_generation_covers_the_awkward_cases():
         "needs a tracked item with nothing anywhere"
 
 
+def test_generation_leaves_some_items_unactivated_at_each_location():
+    """A location absent from quantities is never activated there, so a move
+    has to call inventoryActivate. Without these, every item already exists at
+    both locations and that path is dead code in the rehearsal."""
+    variants = [v for p in sd._generate(30) for v in p.variants if v.tracked]
+
+    assert any(sd.HOME in v.quantities and sd.FAIR not in v.quantities
+               for v in variants), "need items not activated at the fair"
+    assert any(sd.FAIR in v.quantities and sd.HOME not in v.quantities
+               for v in variants), "need items not activated at home"
+
+
+def test_absent_location_is_distinct_from_zero():
+    """Both look like 'no stock', but only one needs activating."""
+    variants = [v for p in sd._generate(30) for v in p.variants if v.tracked]
+    assert any(v.quantities.get(sd.FAIR) == 0 for v in variants), \
+        "need an item stocked-but-empty at the fair"
+    assert any(sd.FAIR not in v.quantities for v in variants), \
+        "need an item not stocked at the fair at all"
+
+
+def test_a_multi_variant_product_mixes_activation_states():
+    """One product should exercise both paths in a single move."""
+    products = sd._generate(30)
+    mixed = [
+        p for p in products
+        if len(p.variants) > 1
+        and any(sd.FAIR in v.quantities for v in p.variants)
+        and any(sd.FAIR not in v.quantities for v in p.variants)
+    ]
+    assert mixed, "no multi-variant product mixes activated and unactivated variants"
+
+
+def test_unactivated_locations_are_omitted_from_the_input():
+    """The payload must not mention a location the item isn't stocked at."""
+    product = sd.SeedProduct(
+        title="X", options=[],
+        variants=[sd.SeedVariant([], "1.00", "S", tracked=True,
+                                 quantities={sd.HOME: 3})])
+    quantities = sd._to_input(product, LOC_IDS)["variants"][0]["inventoryQuantities"]
+    assert [q["locationId"] for q in quantities] == [LOC_IDS[sd.HOME]]
+
+
 def test_generation_includes_a_large_holding():
     """So a move crosses the batch boundary in units, not just item count."""
     products = sd._generate(5)

@@ -274,32 +274,45 @@ def _generate(count: int) -> list[SeedProduct]:
             ))
             continue
 
-        # Multi-variant with uneven stock across locations.
+        # Multi-variant with uneven stock. The last size is deliberately left
+        # unactivated at the fair, so one product exercises both the activate
+        # and the no-activate paths within a single move.
         if index % 5 == 4:
             values = _SIZES
-            variants = [
-                SeedVariant(
+            variants = []
+            for i, size in enumerate(values):
+                if i == len(values) - 1:
+                    quantities = {HOME: rng.randint(1, 4)}
+                else:
+                    quantities = {HOME: rng.randint(0, 6), FAIR: rng.randint(0, 2)}
+                variants.append(SeedVariant(
                     option_values=[("Size", size)],
                     price=f"{4 + i}.50",
                     sku=f"{sku_base}-{size}",
                     tracked=True,
-                    quantities={HOME: rng.randint(0, 6), FAIR: rng.randint(0, 2)},
-                )
-                for i, size in enumerate(values)
-            ]
+                    quantities=quantities,
+                ))
             products.append(SeedProduct(title=title,
                                         options=[("Size", list(values))],
                                         variants=variants))
             continue
 
-        # Single variant, cycling through the location-stock permutations so a
-        # run always covers home-only, fair-only, both, and neither.
-        pattern = index % 4
+        # Single variant, cycling through the location permutations.
+        #
+        # A location ABSENT from this dict is deliberately different from one
+        # present with quantity 0: absent means the item is never activated
+        # there, so a move has to call inventoryActivate first, while 0 means
+        # it is stocked but empty. Collapsing the two would leave the
+        # activation path untested, since every item would already exist at
+        # both locations.
+        pattern = index % 6
         quantities = {
-            0: {HOME: rng.randint(1, 9), FAIR: 0},        # source only
-            1: {HOME: 0, FAIR: rng.randint(1, 4)},        # destination only
-            2: {HOME: rng.randint(1, 5), FAIR: rng.randint(1, 3)},   # both
-            3: {HOME: 0, FAIR: 0},                        # nothing anywhere
+            0: {HOME: rng.randint(1, 9), FAIR: 0},                  # source only
+            1: {HOME: 0, FAIR: rng.randint(1, 4)},                  # dest only
+            2: {HOME: rng.randint(1, 5), FAIR: rng.randint(1, 3)},  # both
+            3: {HOME: 0, FAIR: 0},                                  # both, empty
+            4: {HOME: rng.randint(1, 6)},          # not activated at the fair
+            5: {FAIR: rng.randint(1, 4)},          # not activated at home
         }[pattern]
         products.append(SeedProduct(
             title=title,

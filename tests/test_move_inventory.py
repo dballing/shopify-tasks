@@ -276,8 +276,25 @@ def test_only_unstocked_items_are_activated(make_client):
     mi._activate(make_ctx(client), [stocked, unstocked], FAIR)
 
     assert len(client.session.requests) == 1
-    assert client.session.requests[0]["payload"]["variables"] == {
-        "inventoryItemId": "B", "locationId": FAIR["id"]}
+    variables = client.session.requests[0]["payload"]["variables"]
+    assert variables["inventoryItemId"] == "B"
+    assert variables["locationId"] == FAIR["id"]
+
+
+def test_activation_carries_an_idempotency_key(make_client):
+    """inventoryActivate needs @idempotent too, though Shopify's changelog for
+    the 2026-04 change does not list it. Discovered the hard way: without a key
+    it fails at runtime, and every activation in a real run was rejected."""
+    m = move(item_id="B", needs_activation=True)
+    client = make_client(
+        [gql({"inventoryActivate": {"inventoryLevel": {"id": "l"}, "userErrors": []}})],
+        writes_enabled=True)
+    mi._activate(make_ctx(client), [m], FAIR)
+
+    request = client.session.requests[0]["payload"]
+    assert "@idempotent" in request["query"]
+    assert len(request["variables"]["key"]) == 36
+    assert m.failed is None
 
 
 def test_activation_failure_is_confined_to_that_item(make_client):

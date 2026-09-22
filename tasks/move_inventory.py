@@ -119,9 +119,15 @@ query ScanProducts($ids: [ID!]!, $fromId: ID!, $toId: ID!, $variants: Int!) {
 }
 """
 
+# inventoryActivate needs @idempotent too, even though Shopify's changelog for
+# the 2026-04 change lists only the adjust/move/set/transfer mutations. That
+# list is incomplete: without a key this fails at runtime with "The @idempotent
+# directive is required for this mutation but was not provided". Assume any
+# inventory mutation needs one rather than trusting the list.
 ACTIVATE_MUTATION = """
-mutation Activate($inventoryItemId: ID!, $locationId: ID!) {
-  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId) {
+mutation Activate($inventoryItemId: ID!, $locationId: ID!, $key: String!) {
+  inventoryActivate(inventoryItemId: $inventoryItemId, locationId: $locationId)
+    @idempotent(key: $key) {
     inventoryLevel { id }
     userErrors { field message }
   }
@@ -257,7 +263,14 @@ def run(ctx, args):
         ctx.log.warning("%d item(s) did not move:", len(failed))
         for move in failed:
             ctx.log.warning("   %s: %s", move.label, move.failed)
-        ctx.log.warning("Quantities changed during the run; re-run to pick them up.")
+        # Only blame concurrency when concurrency was actually the problem --
+        # an activation failure told to "re-run to pick them up" sends you
+        # looking for a phantom sale instead of at the real error above.
+        if any(m.failed and "changed" in m.failed.lower() for m in failed):
+            ctx.log.warning(
+                "Some quantities changed mid-run; re-running will pick those up.")
+        else:
+            ctx.log.warning("Fix the errors above, then re-run.")
 
     if ctx.json_output:
         output.emit_json({
@@ -460,7 +473,8 @@ def _activate(ctx, moves: list[Move], dest: dict) -> None:
         try:
             ctx.mutate(
                 ACTIVATE_MUTATION,
-                {"inventoryItemId": move.item_id, "locationId": dest["id"]},
+                {"inventoryItemId": move.item_id, "locationId": dest["id"],
+                 "key": str(uuid.uuid4())},
                 field="inventoryActivate",
                 describe=f"activate {move.label} at {dest['name']}",
             )

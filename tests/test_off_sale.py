@@ -6,11 +6,12 @@ import pytest
 
 from shopifylib.errors import TaskError
 from tasks import off_sale as ofs
-from tests.test_pricing import make_ctx, product_node, products_response, updated, variant
+from tests.test_pricing import (make_ctx, product_node, products_response, updated,
+                                variant, variant_node, variants_response)
 
 
-def args(pids="1"):
-    return type("A", (), dict(pids=pids))()
+def args(pids="1", *, vids=None):
+    return type("A", (), dict(pids=None if vids else pids, vids=vids))()
 
 
 def mutations(client) -> list[dict]:
@@ -64,4 +65,24 @@ def test_one_mutation_per_product(make_client):
 def test_dry_run_sends_no_mutation(make_client):
     client = make_client([products_response(ON_SALE)])
     ofs.run(make_ctx(client, dry_run=True), args())
+    assert mutations(client) == []
+
+
+def test_vids_ends_the_sale_on_only_the_named_variant(make_client):
+    """The case that prompted --vids: two sizes on sale, end one."""
+    client = make_client([
+        variants_response(variant_node(2, price="50.00", compare_at="62.00")),
+        updated({"id": variant(2)["id"], "price": "62.00", "compareAtPrice": None}),
+    ], writes_enabled=True)
+    ofs.run(make_ctx(client), args(vids="2"))
+    [sent] = mutations(client)
+    assert sent["variants"] == [{"id": variant(2)["id"], "price": "62.00",
+                                 "compareAtPrice": None}]
+
+
+def test_vids_not_on_sale_is_refused(make_client):
+    client = make_client([variants_response(
+        variant_node(2, price="62.00", compare_at=None))], writes_enabled=True)
+    with pytest.raises(TaskError, match="regular"):
+        ofs.run(make_ctx(client), args(vids="2"))
     assert mutations(client) == []

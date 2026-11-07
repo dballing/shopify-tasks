@@ -12,8 +12,9 @@ its name.
 
 A compare-at at or below the price is not a sale -- Shopify draws no
 strikethrough for it -- but those variants are listed anyway with their sale
-price marked ``*``, as leftovers worth cleaning up. The ``pid`` column is the
-numeric id go-on-sale and off-sale take.
+price marked ``*``, as leftovers worth cleaning up. The ``pid`` and ``vid``
+columns are the numeric ids go-on-sale and off-sale take, for a whole product
+or a single variant respectively.
 """
 from __future__ import annotations
 
@@ -78,9 +79,10 @@ def run(ctx, args):
     rows = sorted([(r, "") for r in on_sale] + [(r, STALE_MARKER) for r in stale],
                   key=lambda pair: pair[0]["product"].lower())
     print(output.format_table([
-        # The bare numeric id, since that is what --pid/--pids and the admin
-        # URL take; the full GID is in --json.
-        {"pid": gid.numeric(r["product_id"]), "product": r["product"],
+        # Bare numeric ids, since that is what --pid(s)/--vids and the admin
+        # URL take; the full GIDs are in --json.
+        {"pid": gid.numeric(r["product_id"]), "vid": gid.numeric(r["variant_id"]),
+         "product": r["product"],
          "regular price": r["regular_price"],
          "sale price": r["sale_price"] + marker} for r, marker in rows]))
     print(f"\n{len(on_sale)} variant(s) on sale")

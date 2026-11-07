@@ -46,12 +46,13 @@ def table(capsys) -> list[list[str]]:
     return [line.split() for line in lines]
 
 
-def test_rows_lead_with_the_pid_and_are_sorted(make_client, capsys):
+def test_rows_lead_with_the_ids_and_are_sorted(make_client, capsys):
     los.run(make_ctx(make_client([page(*CATALOGUE)])), args())
     header, _, *rows = table(capsys)
-    assert header == ["pid", "product", "regular", "price", "sale", "price"]
-    # The bare numeric id, ready to paste into --pid.
-    assert [r[:2] for r in rows] == [["4", "Amber"], ["1", "Coral"], ["3", "Leftover"]]
+    assert header == ["pid", "vid", "product", "regular", "price", "sale", "price"]
+    # Bare numeric ids, ready to paste into --pid(s) or --vids.
+    assert [r[:3] for r in rows] == [
+        ["4", "1", "Amber"], ["1", "1", "Coral"], ["3", "1", "Leftover"]]
 
 
 def test_stale_compare_ats_are_listed_and_marked(make_client, capsys):

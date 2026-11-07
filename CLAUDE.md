@@ -66,10 +66,10 @@ Python 3.11+ required (stdlib `tomllib`). `./shopify.sh` and `./run_tests.sh` ac
 | `shopifylib/gid.py` | GID build/parse/coerce, admin URLs. |
 | `shopifylib/output.py` | Logging setup, `Progress`, `emit_json`/`emit_jsonl`, `format_table`. |
 | `tasks/auth.py` | One-time OAuth flow: localhost callback catcher, state/HMAC/domain validation, code exchange. |
-| `shopifylib/pricing.py` | Sale-price vocabulary (`ON_SALE` / `REGULAR` / `STALE`), Decimal money handling, the shared product read and `productVariantsBulkUpdate` write with read-back check. |
+| `shopifylib/pricing.py` | Sale-price vocabulary (`ON_SALE` / `REGULAR` / `STALE`), Decimal money handling, the shared product/variant reads (`--vids` loads are grouped into product-shaped nodes so the tasks plan both alike) and `productVariantsBulkUpdate` write with read-back check. |
 | `tasks/list_on_sale.py` | Read-only table of marked-down variants: regular and sale price. |
 | `tasks/go_on_sale.py` | Markdown: compare-at <- price, price <- `--price`; `--deep-discount` moves only price. |
-| `tasks/off_sale.py` | Reverse: price <- compare-at, compare-at cleared. All-or-nothing across `--pids`. |
+| `tasks/off_sale.py` | Reverse: price <- compare-at, compare-at cleared. All-or-nothing across `--pids` / `--vids`. |
 | `tasks/move_inventory.py` | Move stock between locations: paired deltas, compare-and-swap, activation. |
 | `tasks/list_inventory.py` | Read-only stock table across locations; same shape as `seed-dev`. |
 | `tasks/seed_dev.py` | Populate a development store (synthetic or cloned). Guarded to dev stores only. |

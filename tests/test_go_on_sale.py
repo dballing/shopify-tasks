@@ -6,11 +6,13 @@ import pytest
 
 from shopifylib.errors import TaskError
 from tasks import go_on_sale as gos
-from tests.test_pricing import make_ctx, product_node, products_response, updated, variant
+from tests.test_pricing import (make_ctx, product_node, products_response, updated,
+                                variant, variant_node, variants_response)
 
 
-def args(price="15.00", *, deep=False, pid="1"):
-    return type("A", (), dict(pid=pid, price=price, deep_discount=deep))()
+def args(price="15.00", *, deep=False, pid="1", vids=None):
+    return type("A", (), dict(pid=None if vids else pid, vids=vids, price=price,
+                              deep_discount=deep))()
 
 
 def mutations(client) -> list[dict]:
@@ -112,3 +114,40 @@ def test_bad_price_is_refused_before_any_request(make_client):
     with pytest.raises(TaskError):
         gos.run(make_ctx(client), args("12.345"))
     assert client.session.requests == []
+
+
+# ---------------------------------------------------------------------------
+# --vids
+# ---------------------------------------------------------------------------
+
+def test_vids_marks_down_only_the_named_variant(make_client):
+    client = make_client([
+        variants_response(variant_node(2, price="62.00", compare_at=None)),
+        updated({"id": variant(2)["id"], "price": "50.00", "compareAtPrice": "62.00"}),
+    ], writes_enabled=True)
+    gos.run(make_ctx(client), args("50.00", vids="2"))
+    [sent] = mutations(client)
+    assert sent["productId"] == "gid://shopify/Product/1"
+    assert sent["variants"] == [{"id": variant(2)["id"], "price": "50.00",
+                                 "compareAtPrice": "62.00"}]
+
+
+def test_vids_across_products_is_one_write_per_product(make_client):
+    client = make_client([
+        variants_response(variant_node(1, pid=1, price="20.00", compare_at=None),
+                          variant_node(2, pid=2, title="Other", price="30.00",
+                                       compare_at=None)),
+        updated({"id": variant(1)["id"], "price": "10.00", "compareAtPrice": "20.00"}),
+        updated({"id": variant(2)["id"], "price": "10.00", "compareAtPrice": "30.00"}),
+    ], writes_enabled=True)
+    gos.run(make_ctx(client), args("10.00", vids="1,2"))
+    assert [m["productId"][-1] for m in mutations(client)] == ["1", "2"]
+
+
+def test_vids_one_bad_variant_in_another_product_writes_nothing(make_client):
+    client = make_client([variants_response(
+        variant_node(1, pid=1, price="20.00", compare_at=None),
+        variant_node(2, pid=2, title="Other"))], writes_enabled=True)
+    with pytest.raises(TaskError, match="Other - V2: already on sale"):
+        gos.run(make_ctx(client), args("10.00", vids="1,2"))
+    assert mutations(client) == []

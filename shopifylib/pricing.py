@@ -47,6 +47,19 @@ query PricedProducts($ids: [ID!]!, $variants: Int!) {
 }
 """ % VARIANT_FIELDS
 
+# Variants named directly, each carrying its product. Flat -- no connection at
+# all -- because the caller already knows exactly which variants it wants.
+VARIANTS_BY_ID_QUERY = """
+query PricedVariants($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on ProductVariant {
+      id displayName price compareAtPrice
+      product { id title status }
+    }
+  }
+}
+"""
+
 # No compare-and-swap here, unlike inventory: productVariantsBulkUpdate takes no
 # expected-value argument. Absolute prices make that tolerable -- a retried
 # write sets the same values again rather than applying a delta twice -- and
@@ -146,18 +159,49 @@ def load_products(ctx, ids: list[str]) -> list[dict]:
                 raise TaskError(
                     f"{node['title']!r} has more than {VARIANTS_PER_PRODUCT} "
                     f"variants; refusing to reprice only some of them.")
-            if inventory.is_archived(node.get("status")):
-                ctx.log.warning("%r is archived; repricing it anyway since it "
-                                "was named explicitly.", node["title"])
+            _warn_if_archived(ctx, node)
             products.append(node)
     return products
 
 
-def product_ids(text: str, flag: str) -> list[str]:
-    ids = [gid.coerce(p, "Product") for p in text.split(",") if p.strip()]
+def load_variants(ctx, ids: list[str]) -> list[dict]:
+    """Named variants, grouped into product-shaped nodes holding only those.
+
+    The grouping is what the write needs -- productVariantsBulkUpdate takes one
+    product per call -- and keeping the same shape as load_products means the
+    tasks validate and plan a --vids run with exactly the code a --pids run
+    uses. Strict for the same reason load_products is.
+    """
+    products: dict[str, dict] = {}
+    for chunk in (ids[i:i + 50] for i in range(0, len(ids), 50)):
+        data = ctx.query(VARIANTS_BY_ID_QUERY, {"ids": chunk})
+        for requested, node in zip(chunk, data["nodes"]):
+            # A product id given as a variant id resolves to nothing rather
+            # than to the wrong record, so this one check covers both cases.
+            if not node:
+                raise TaskError(
+                    f"No such variant: {gid.numeric(requested)} "
+                    f"(or that id is not a variant -- list-on-sale's vid column).")
+            parent = node["product"]
+            if parent["id"] not in products:
+                _warn_if_archived(ctx, parent)
+                products[parent["id"]] = {**parent, "variants": {
+                    "nodes": [], "pageInfo": {"hasNextPage": False}}}
+            products[parent["id"]]["variants"]["nodes"].append(node)
+    return list(products.values())
+
+
+def _warn_if_archived(ctx, product: dict) -> None:
+    if inventory.is_archived(product.get("status")):
+        ctx.log.warning("%r is archived; repricing it anyway since it "
+                        "was named explicitly.", product["title"])
+
+
+def parse_ids(text: str, resource: str, flag: str) -> list[str]:
+    ids = [gid.coerce(p, resource) for p in text.split(",") if p.strip()]
     if not ids:
         raise TaskError(f"{flag} was empty.")
-    # Order-preserving dedupe: naming a product twice must not write it twice.
+    # Order-preserving dedupe: naming a record twice must not write it twice.
     return list(dict.fromkeys(ids))
 
 

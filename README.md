@@ -112,9 +112,9 @@ it with `--shop dev` is worth the five minutes before any bulk edit.
 | `list-inventory` | Stock levels across every location. Read-only. |
 | `move-inventory` | Move stock between two locations, additively. |
 | `seed-dev` | Populate a development store with test products. |
-| `list-on-sale` | Every marked-down variant: regular (compare-at) and sale price. Read-only. |
-| `go-on-sale` | Mark a product down: compare-at gets the current price, price gets `--price`. `--deep-discount` changes the sale price of something already on sale. |
-| `off-sale` | Restore the regular price from compare-at and clear compare-at. |
+| `list-on-sale` | Every marked-down variant with its product and variant ids, regular (compare-at) and sale price. Read-only. |
+| `go-on-sale` | Mark a product down: compare-at gets the current price, price gets `--price`. `--deep-discount` changes the sale price of something already on sale. `--vids` targets single variants. |
+| `off-sale` | Restore the regular price from compare-at and clear compare-at. `--pids` or `--vids`. |
 
 ## Adding a task
 

@@ -3,14 +3,17 @@
 
     ./shopify.sh off-sale --pids 123
     ./shopify.sh off-sale --pids 123,456 --commit
+    ./shopify.sh off-sale --vids 789 --commit
 
 The reverse of go-on-sale: each variant's ``price`` goes back to its
-``compareAtPrice`` (the regular price) and compare-at is cleared.
+``compareAtPrice`` (the regular price) and compare-at is cleared. ``--pids``
+takes whole products; ``--vids`` takes individual variants (list-on-sale's vid
+column), for ending the sale on one size and not another.
 
 A product that is not on sale is refused rather than skipped. That includes a
 compare-at at or below the price: "restoring" that would set the price to a
-number that was never the regular one. Every named product is checked before
-anything is written, so a run either takes all of them off sale or none.
+number that was never the regular one. Everything named is checked before
+anything is written, so a run either takes all of it off sale or none.
 """
 from __future__ import annotations
 
@@ -19,8 +22,12 @@ from shopifylib.task import task
 
 
 def add_arguments(parser):
-    parser.add_argument("--pids", required=True, metavar="A,B,C",
-                        help="comma-separated product ids (numeric, GID, or admin URL)")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--pids", metavar="A,B,C",
+                        help="comma-separated product ids (numeric, GID, or admin "
+                             "URL); every variant comes off sale")
+    target.add_argument("--vids", metavar="A,B,C",
+                        help="comma-separated variant ids; only these come off sale")
 
 
 @task(
@@ -35,7 +42,12 @@ def run(ctx, args):
     Refuses any product with a variant that is not on sale, and writes nothing
     in that case.
     """
-    products = pricing.load_products(ctx, pricing.product_ids(args.pids, "--pids"))
+    if args.vids:
+        products = pricing.load_variants(
+            ctx, pricing.parse_ids(args.vids, "ProductVariant", "--vids"))
+    else:
+        products = pricing.load_products(
+            ctx, pricing.parse_ids(args.pids, "Product", "--pids"))
 
     planned, problems = [], []
     for product in products:

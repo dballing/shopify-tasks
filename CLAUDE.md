@@ -66,6 +66,10 @@ Python 3.11+ required (stdlib `tomllib`). `./shopify.sh` and `./run_tests.sh` ac
 | `shopifylib/gid.py` | GID build/parse/coerce, admin URLs. |
 | `shopifylib/output.py` | Logging setup, `Progress`, `emit_json`/`emit_jsonl`, `format_table`. |
 | `tasks/auth.py` | One-time OAuth flow: localhost callback catcher, state/HMAC/domain validation, code exchange. |
+| `shopifylib/pricing.py` | Sale-price vocabulary (`ON_SALE` / `REGULAR` / `STALE`), Decimal money handling, the shared product read and `productVariantsBulkUpdate` write with read-back check. |
+| `tasks/list_on_sale.py` | Read-only table of marked-down variants: regular and sale price. |
+| `tasks/go_on_sale.py` | Markdown: compare-at <- price, price <- `--price`; `--deep-discount` moves only price. |
+| `tasks/off_sale.py` | Reverse: price <- compare-at, compare-at cleared. All-or-nothing across `--pids`. |
 | `tasks/move_inventory.py` | Move stock between locations: paired deltas, compare-and-swap, activation. |
 | `tasks/list_inventory.py` | Read-only stock table across locations; same shape as `seed-dev`. |
 | `tasks/seed_dev.py` | Populate a development store (synthetic or cloned). Guarded to dev stores only. |
@@ -137,6 +141,8 @@ def run(ctx, args):
 - **The Admin API only answers on `*.myshopify.com`.** A custom storefront domain 404s, and the 404 looks like a version problem. `config.py` rejects non-myshopify domains upfront for this reason.
 - **Changing the app's scopes invalidates the token's scope set.** The cached token carries the scopes granted at authorization time; new calls needing a newly-added scope get `ACCESS_DENIED` until `./shopify.sh auth` is re-run. Grant what you expect to need up front.
 - **REST is not an option.** The REST Admin API was marked legacy on 2024-10-01 and new apps have been GraphQL-only since 2025-04-01. Don't add a REST path.
+- **"On sale" means compare-at set *and above* price.** That is this store's markdown convention (compare-at holds the regular price). A compare-at at or below the price is `STALE`: Shopify draws no strikethrough, and `off-sale` restoring it would set a price that was never the regular one. So stale counts as not-on-sale everywhere — `go-on-sale` overwrites it, `off-sale` and `--deep-discount` refuse it. `pricing.state` is the single test; never use float for prices.
+- **`productVariantsBulkUpdate` has no compare-and-swap, and doesn't need `@idempotent`** (verified live on 2026-07). Absolute prices make a retried write harmless. Sending `compareAtPrice: null` clears the field (verified); *omitting* it leaves it untouched, which is how `--deep-discount` preserves the regular price. Mix those two up and you either wipe the regular price or fail to end a sale.
 - **Pin the API version.** Shopify ships quarterly and retires each version about a year later. `config.py:DEFAULT_API_VERSION` is the fallback; bump it deliberately, not reflexively. As of 2026-09: 2026-07 is latest stable, 2026-10 is the RC.
 - **stdout is results, stderr is narration.** `--json` goes to stdout and nothing else does, so tasks compose in a pipeline. `output.setup_logging` line-buffers stdout so a long run streams to a `tail -f`'d log instead of block-buffering.
 

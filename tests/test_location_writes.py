@@ -16,7 +16,7 @@ from shopifylib.errors import TaskError
 from shopifylib.task import TaskContext
 from tasks import add_location, delete_location, disable_location, enable_location
 from tests.conftest import gql
-from tests.test_list_locations import loc, levels
+from tests.test_list_locations import loc
 
 HOME = loc(1, "Home", online=True, hasActiveInventory=True)
 FAIR = loc(3, "Craft Fair", hasActiveInventory=True)
@@ -201,25 +201,52 @@ def test_enable_explains_shopify_errors_by_code(make_client):
 # disable-location
 # ---------------------------------------------------------------------------
 
-def test_inventory_records_without_the_flag_are_refused_with_the_fix(make_client):
-    client = make_client([known(HOME, FAIR), levels(("i1", 4), ("i2", 1))])
+def on_hand(*rows):
+    """A location's records as ON_HAND_QUERY sees them: (available, on_hand)."""
+    return gql({"location": {"inventoryLevels": {
+        "nodes": [{"item": {"id": f"i{n}"},
+                   "quantities": [{"name": "available", "quantity": a},
+                                  {"name": "on_hand", "quantity": h}]}
+                  for n, (a, h) in enumerate(rows)],
+        "pageInfo": {"hasNextPage": False, "endCursor": None}}}})
+
+
+def test_units_on_hand_are_refused_even_with_the_flag(make_client):
+    """Shopify's own relocation logs 'Items relocated' with no creator; units
+    go through move-inventory instead, which attributes them."""
+    client = make_client([known(HOME, FAIR), on_hand((4, 4), (1, 1), (0, 0))])
     with pytest.raises(TaskError) as exc:
         disable_location.run(make_ctx(client), ns(location="Craft Fair",
-                                                  move_stock_to=None))
-    assert "holds 5 unit(s) across 2 item(s)" in str(exc.value)
-    assert 'disable-location "Craft Fair" --move-stock-to Home' in str(exc.value)
+                                                  move_stock_to="Home"))
+    assert "5 unit(s) on hand across 2 item(s)" in str(exc.value)
+    assert ('move-inventory --from "Craft Fair" --to Home --all --commit'
+            in str(exc.value))
+    assert "not available" not in str(exc.value)
+    assert sent(client, "locationDeactivate") == []
+
+
+def test_unavailable_units_are_called_out(make_client):
+    """on_hand, not available: damaged units would otherwise be relocated by
+    Shopify, unattributed, and move-inventory wouldn't have moved them."""
+    client = make_client([known(HOME, FAIR), on_hand((0, 2))])
+    with pytest.raises(TaskError, match="2 of those unit\\(s\\) are on hand but not "
+                                        "available"):
+        disable_location.run(make_ctx(client), ns(location="Craft Fair",
+                                                  move_stock_to="Home"))
 
 
 def test_zero_units_still_need_the_flag(make_client):
     """Verified on dev: zero-unit records block deactivation outright."""
-    client = make_client([known(HOME, FAIR), levels(("i1", 0))])
-    with pytest.raises(TaskError, match="holds 0 units, but still has inventory records"):
+    client = make_client([known(HOME, FAIR), on_hand((0, 0))])
+    with pytest.raises(TaskError, match="holds no units, but still has inventory "
+                                        "records") as exc:
         disable_location.run(make_ctx(client), ns(location="Craft Fair",
                                                   move_stock_to=None))
+    assert 'disable-location "Craft Fair" --move-stock-to Home' in str(exc.value)
 
 
-def test_move_stock_to_passes_the_destination(make_client):
-    client = make_client([known(HOME, FAIR), levels(("i1", 4)),
+def test_empty_records_are_cleared_via_the_destination(make_client):
+    client = make_client([known(HOME, FAIR), on_hand((0, 0), (0, 0)),
                           ok("locationDeactivate", location={"id": "x", "isActive": False})],
                          writes_enabled=True)
     disable_location.run(make_ctx(client), ns(location="Craft Fair", move_stock_to="Home"))
@@ -252,7 +279,8 @@ def test_unfulfilled_orders_are_refused_up_front(make_client):
 
 def test_destination_must_be_active(make_client):
     with pytest.raises(TaskError, match="is disabled"):
-        disable_location.run(make_ctx(make_client([known(HOME, FAIR, MARKET_A)])),
+        disable_location.run(make_ctx(make_client([known(HOME, FAIR, MARKET_A),
+                                                   on_hand((0, 0))])),
                              ns(location="Craft Fair", move_stock_to="Market A"))
 
 
@@ -265,7 +293,7 @@ def test_disable_explains_shopify_errors_by_code(make_client):
 
 
 def test_disable_dry_run_sends_nothing(make_client):
-    client = make_client([known(HOME, FAIR), levels(("i1", 4))])
+    client = make_client([known(HOME, FAIR), on_hand((0, 0))])
     disable_location.run(make_ctx(client, dry_run=True),
                          ns(location="Craft Fair", move_stock_to="Home"))
     assert sent(client, "locationDeactivate") == []

@@ -118,7 +118,7 @@ it with `--shop dev` is worth the five minutes before any bulk edit.
 | `list-locations` | Every location, active and disabled, with address, units held, and the active count against the plan's limit. Read-only. |
 | `add-location` | Add a location (market venue) from separate address fields. POS-only unless `--fulfill-online`; `--disabled` keeps it on file. |
 | `enable-location` | Re-enable a disabled location before a show. Checks the active-location limit first. |
-| `disable-location` | Disable a location after a show. `--move-stock-to Home` is required whenever it has any inventory records, even at zero units. |
+| `disable-location` | Disable a location after a show. Refuses while any unit is on hand there (move it with `move-inventory`, so the history records who moved it); `--move-stock-to Home` then clears the empty item records Shopify otherwise won't let go of. |
 | `delete-location` | Permanently delete a location. It must be disabled first and named exactly. |
 
 ### Market venues
@@ -133,6 +133,7 @@ toward the plan's location limit.
 ./shopify.sh enable-location "Market A" --commit                 # before the show
 ./shopify.sh move-inventory --from Home --to "Market A" --pids ... --commit
 # ... the show; switch the POS device to "Market A" ...
+./shopify.sh move-inventory --from "Market A" --to Home --all --commit
 ./shopify.sh disable-location "Market A" --move-stock-to Home --commit
 ```
 

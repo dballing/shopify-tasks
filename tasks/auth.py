@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One-time OAuth flow to obtain an access token for a store.
 
-Run this once per store. It opens your browser, you approve the app, and it
-prints a token to paste into config.toml.
+Run this once per store, and again whenever the app gains a scope. It opens
+your browser, you approve the app, and the token is saved to the token cache
+(outside the repo), where every task picks it up. There is nothing to copy.
 
 Needed because Shopify retired admin-created custom apps on 2026-01-01 -- the
 ones that showed you a permanent ``shpat_`` token in the admin UI. A Dev
@@ -34,7 +35,7 @@ import threading
 import urllib.parse
 import webbrowser
 
-from shopifylib import auth, output
+from shopifylib import auth, config, output
 from shopifylib.errors import TaskError
 from shopifylib.task import task
 
@@ -146,22 +147,50 @@ def run(ctx, args):
         return
 
     print("\n" + "=" * 68)
-    print(f"Access token for {shop.id} ({shop.domain}):\n")
-    print(f"  {record.access_token}\n")
-    if record.expires_at is None:
-        print("This token does not expire. Add it to config.toml to avoid")
-        print("depending on the cache:\n")
-        print(f"  [[shops]]")
-        print(f"  id = \"{shop.id}\"")
-        print(f"  access_token = \"{record.access_token}\"\n")
-        print("Or keep it out of the file entirely:\n")
-        print(f"  export SHOPIFY_TOKEN_{shop.id.upper().replace('-', '_')}"
-              f"='{record.access_token}'")
-    else:
-        print("This token expires, but a refresh token was issued alongside it,")
-        print("so it will be renewed automatically. Nothing to copy.")
+    print("\n".join(_next_steps(shop, record, cached=not args.print_only)))
     print("=" * 68)
-    print("\nVerify with:  ./shopify.sh shop-info --shop " + shop.id)
+
+
+def _next_steps(shop, record, *, cached: bool) -> list[str]:
+    """What to tell the user once a token is in hand.
+
+    The default path needs nothing from them: the token is in the cache, and
+    every task reads it from there. This deliberately does **not** suggest
+    copying the token into config.toml. The cache lives outside the repo
+    because the repo sits in Dropbox and anything beside the code syncs to
+    every linked machine, and config.toml is beside the code.
+
+    It also warns when a static token is configured, because that wins over
+    the cache in TokenProvider's resolution order. Re-authorizing to pick up a
+    new scope would then appear to succeed while every task kept using the old
+    token, and the old scopes.
+    """
+    lines = [f"Authorized {shop.id} ({shop.domain})."]
+    if cached:
+        lines.append(f"The token is saved in {auth.cache_path()} and every task")
+        lines.append("uses it from there. Nothing to copy.")
+        if record.expires_at is not None:
+            lines.append("It expires, but a refresh token was issued with it, so it")
+            lines.append("renews automatically.")
+    else:
+        # --print-only: the user asked not to cache it, so this is the only
+        # copy. The environment keeps it out of every file, synced or not.
+        lines.append("--print-only: the token was NOT saved. To use it, set it in the")
+        lines.append("environment (not config.toml, which syncs with Dropbox):\n")
+        lines.append(f"  export {config.token_env_var(shop.id)}='{record.access_token}'")
+        if record.expires_at is not None:
+            lines.append("\nIt expires, and without the cache its refresh token is lost;")
+            lines.append("re-run without --print-only to have it renewed automatically.")
+
+    if cached and shop.access_token:
+        lines.append("")
+        lines.append(f"WARNING: a static access_token is also set for {shop.id!r}, in")
+        lines.append(f"config.toml or ${config.token_env_var(shop.id)}. It takes")
+        lines.append("precedence over the cache, so the token just saved -- and any")
+        lines.append("newly granted scopes -- will NOT be used until you remove it.")
+
+    lines.append(f"\nVerify with:  ./shopify.sh shop-info --shop {shop.id}")
+    return lines
 
 
 def _default_scopes() -> str:

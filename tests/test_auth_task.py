@@ -335,3 +335,52 @@ def test_listener_rejects_a_forged_callback():
         thread.join(timeout=5)
 
     assert status.get("code") == 400
+
+
+# ---------------------------------------------------------------------------
+# What to do next
+# ---------------------------------------------------------------------------
+
+def _shop(token=None):
+    from shopifylib.config import Shop
+    return Shop(id="prod", domain="acme.myshopify.com", access_token=token,
+                client_id="cid", client_secret="secret", api_version="2026-07",
+                plan="basic")
+
+
+def _record(expires_at=None):
+    from shopifylib.auth import TokenRecord
+    return TokenRecord(access_token="shpat_new", scope="read_products",
+                       expires_at=expires_at)
+
+
+def test_cached_token_is_neither_printed_nor_sent_to_config():
+    """The repo is in Dropbox; config.toml syncs to every linked machine, which
+    is exactly why the cache lives outside it. Advice to paste the token there
+    undid that, and printing it at all left it in terminal scrollback."""
+    text = "\n".join(auth_task._next_steps(_shop(), _record(), cached=True))
+    assert "shpat_new" not in text
+    assert "config.toml" not in text
+    assert "Nothing to copy" in text
+    assert "shop-info --shop prod" in text
+
+
+def test_static_token_in_config_is_flagged_because_it_beats_the_cache():
+    """Otherwise re-authorizing for a new scope looks like it worked while every
+    task keeps using the old token."""
+    text = "\n".join(auth_task._next_steps(_shop("shpat_old"), _record(), cached=True))
+    assert "WARNING" in text and "SHOPIFY_TOKEN_PROD" in text
+    assert "will NOT be used" in text
+
+
+def test_print_only_shows_the_token_as_an_env_var_not_a_config_line():
+    text = "\n".join(auth_task._next_steps(_shop(), _record(), cached=False))
+    assert "export SHOPIFY_TOKEN_PROD='shpat_new'" in text
+    assert "access_token =" not in text
+    assert "NOT saved" in text
+
+
+def test_print_only_with_an_expiring_token_says_renewal_is_lost():
+    text = "\n".join(auth_task._next_steps(_shop(), _record(expires_at=1.0),
+                                           cached=False))
+    assert "refresh token is lost" in text

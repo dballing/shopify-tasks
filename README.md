@@ -34,7 +34,7 @@ Create an app there and set:
 | Allowed redirection URL(s) | `http://localhost:5004/callback` |
 | Embed app in Shopify admin | unchecked |
 | Use legacy install flow | unchecked |
-| Scopes | `read_products,write_products,read_inventory,write_inventory,read_locations` |
+| Scopes | `read_products,write_products,read_inventory,write_inventory,read_locations,write_locations` |
 
 Both URLs must share a host — Shopify rejects the callback with
 *"redirect_uri and application url must have matching hosts"* otherwise.
@@ -115,6 +115,26 @@ it with `--shop dev` is worth the five minutes before any bulk edit.
 | `list-on-sale` | Every marked-down variant with its product and variant ids, regular (compare-at) and sale price. Read-only. |
 | `go-on-sale` | Mark a product down: compare-at gets the current price, price gets `--price`. `--deep-discount` changes the sale price of something already on sale. `--vids` targets single variants. |
 | `off-sale` | Restore the regular price from compare-at and clear compare-at. `--pids` or `--vids`. |
+| `list-locations` | Every location, active and disabled, with address, units held, and the active count against the plan's limit. Read-only. |
+| `add-location` | Add a location (market venue) from separate address fields. POS-only unless `--fulfill-online`; `--disabled` keeps it on file. |
+| `enable-location` | Re-enable a disabled location before a show. Checks the active-location limit first. |
+| `disable-location` | Disable a location after a show. `--move-stock-to Home` is required whenever it has any inventory records, even at zero units. |
+| `delete-location` | Permanently delete a location. It must be disabled first and named exactly. |
+
+### Market venues
+
+Keep one location per venue you sell at, with its real address — POS charges tax
+against it — and leave it disabled between shows. Disabled locations don't count
+toward the plan's location limit.
+
+```bash
+./shopify.sh add-location --name "Market A" --address1 "123 Main St" \
+    --city Anytown --state VA --zip 22201 --disabled --commit     # once
+./shopify.sh enable-location "Market A" --commit                 # before the show
+./shopify.sh move-inventory --from Home --to "Market A" --pids ... --commit
+# ... the show; switch the POS device to "Market A" ...
+./shopify.sh disable-location "Market A" --move-stock-to Home --commit
+```
 
 ## Adding a task
 

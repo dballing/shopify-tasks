@@ -39,7 +39,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field as dc_field
 
-from shopifylib import gid, inventory, output
+from shopifylib import gid, inventory, locations, output
 from shopifylib.errors import TaskError
 from shopifylib.task import task
 
@@ -64,14 +64,6 @@ BATCH_SIZE = 50
 # Variants fetched per product in --pids mode. Beyond this the task warns rather
 # than silently moving part of a product.
 VARIANTS_PER_PRODUCT = 100
-
-LOCATIONS_QUERY = """
-query Locations {
-  locations(first: 250, includeInactive: true) {
-    nodes { id name isActive fulfillsOnlineOrders }
-  }
-}
-"""
 
 # Scan every item stocked at the source. The destination level is fetched in the
 # same pass via the item's own inventoryLevel(locationId:) so one query answers
@@ -223,9 +215,9 @@ def run(ctx, args):
     Items with nothing at the source are skipped. Uses compare-and-swap so a
     sale landing mid-run skips that item rather than corrupting its count.
     """
-    locations = _load_locations(ctx)
-    source = _resolve_location(locations, args.from_location, "--from")
-    dest = _resolve_location(locations, args.to_location, "--to")
+    known = locations.load(ctx)
+    source = locations.resolve(known, args.from_location, "--from")
+    dest = locations.resolve(known, args.to_location, "--to")
 
     if source["id"] == dest["id"]:
         ctx.fail(f"--from and --to are the same location ({source['name']}).")
@@ -302,56 +294,6 @@ def run(ctx, args):
         })
 
     return 1 if failed else 0
-
-
-# ---------------------------------------------------------------------------
-# Locations
-# ---------------------------------------------------------------------------
-
-def _load_locations(ctx) -> list[dict]:
-    return ctx.query(LOCATIONS_QUERY)["locations"]["nodes"]
-
-
-def _resolve_location(locations: list[dict], value: str, flag: str) -> dict:
-    """Accept a location name, numeric id, or GID.
-
-    Names are the useful form here -- they are what the admin shows and what a
-    person remembers -- so match those case-insensitively, then fall back to ids.
-    """
-    wanted = value.strip()
-
-    exact = [l for l in locations if l["name"].lower() == wanted.lower()]
-    if len(exact) == 1:
-        return exact[0]
-    if len(exact) > 1:
-        raise TaskError(
-            f"{flag}: more than one location is named {wanted!r}. Use its id instead:\n"
-            + "\n".join(f"  {gid.numeric(l['id'])}  {l['name']}" for l in exact)
-        )
-
-    if gid.is_gid(wanted) or wanted.isdigit():
-        target = gid.coerce(wanted, "Location")
-        for loc in locations:
-            if loc["id"] == target:
-                return loc
-
-    # A unique prefix is enough; "Craft Fair" should find "Craft Fair Inventory".
-    partial = [l for l in locations if wanted.lower() in l["name"].lower()]
-    if len(partial) == 1:
-        return partial[0]
-    if len(partial) > 1:
-        raise TaskError(
-            f"{flag}: {wanted!r} matches more than one location:\n"
-            + "\n".join(f"  {l['name']}" for l in partial)
-        )
-
-    raise TaskError(
-        f"{flag}: no location matches {wanted!r}. Configured locations:\n"
-        + "\n".join(
-            f"  {l['name']}" + ("" if l["isActive"] else "  (inactive)")
-            for l in locations
-        )
-    )
 
 
 # ---------------------------------------------------------------------------

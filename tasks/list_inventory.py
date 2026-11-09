@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shopifylib import gid, inventory, output
+from shopifylib import gid, inventory, locations as locs, output
 from shopifylib.errors import TaskError
 from shopifylib.task import task
 
@@ -35,15 +35,6 @@ from shopifylib.task import task
 # connection -- and joined to variants locally by inventory item id.
 PRODUCT_PAGE = 50
 VARIANTS_PER_PRODUCT = 100
-
-LOCATIONS_QUERY = """
-query Locations {
-  locations(first: 250, includeInactive: true) {
-    nodes { id name isActive fulfillsOnlineOrders }
-  }
-}
-"""
-
 
 _VARIANT_FIELDS = """
   nodes {
@@ -184,47 +175,20 @@ def run(ctx, args):
 
 def _columns(ctx, wanted: list[str] | None) -> list[dict]:
     """Which locations become columns, in a stable order."""
-    locations = ctx.query(LOCATIONS_QUERY)["locations"]["nodes"]
-    if not locations:
+    known = locs.load(ctx)
+    if not known:
         raise TaskError("This store has no locations.")
     if not wanted:
         # Active first, then by name, so the interesting columns come first and
         # the order doesn't wander between runs.
-        return sorted(locations, key=lambda l: (not l["isActive"], l["name"].lower()))
+        return sorted(known, key=locs.sort_key)
 
     chosen: list[dict] = []
     for value in wanted:
-        match = _resolve(locations, value)
+        match = locs.resolve(known, value, "--at")
         if match["id"] not in {c["id"] for c in chosen}:
             chosen.append(match)
     return chosen
-
-
-def _resolve(locations: list[dict], value: str) -> dict:
-    """Match a location by exact name, then id, then unique prefix."""
-    wanted = value.strip()
-
-    exact = [l for l in locations if l["name"].lower() == wanted.lower()]
-    if len(exact) == 1:
-        return exact[0]
-
-    if gid.is_gid(wanted) or wanted.isdigit():
-        target = gid.coerce(wanted, "Location")
-        for loc in locations:
-            if loc["id"] == target:
-                return loc
-
-    partial = [l for l in locations if wanted.lower() in l["name"].lower()]
-    if len(partial) == 1:
-        return partial[0]
-    if len(partial) > 1:
-        raise TaskError(
-            f"--at {wanted!r} matches more than one location:\n"
-            + "\n".join(f"  {l['name']}" for l in partial))
-
-    raise TaskError(
-        f"--at: no location matches {wanted!r}. This store has:\n"
-        + "\n".join(f"  {l['name']}" for l in locations))
 
 
 # ---------------------------------------------------------------------------

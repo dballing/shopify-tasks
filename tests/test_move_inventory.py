@@ -115,47 +115,6 @@ def test_available_is_read_from_the_quantities_list():
 
 
 # ---------------------------------------------------------------------------
-# Location resolution
-# ---------------------------------------------------------------------------
-
-def test_resolves_by_exact_name():
-    assert mi._resolve_location(LOCATIONS, "Home", "--from")["id"] == HOME["id"]
-
-
-def test_name_match_is_case_insensitive():
-    assert mi._resolve_location(LOCATIONS, "home", "--from")["id"] == HOME["id"]
-
-
-def test_resolves_by_unique_partial_name():
-    """'Craft Fair' should find 'Craft Fair Inventory'."""
-    assert mi._resolve_location(LOCATIONS, "Craft Fair", "--to")["id"] == FAIR["id"]
-
-
-def test_resolves_by_numeric_id_and_gid():
-    assert mi._resolve_location(LOCATIONS, "1", "--from")["id"] == HOME["id"]
-    assert mi._resolve_location(
-        LOCATIONS, "gid://shopify/Location/2", "--to")["id"] == FAIR["id"]
-
-
-def test_exact_name_beats_a_partial_match():
-    locations = [{"id": "gid://shopify/Location/3", "name": "Home Annex",
-                  "isActive": True, "fulfillsOnlineOrders": True}, HOME]
-    assert mi._resolve_location(locations, "Home", "--from")["id"] == HOME["id"]
-
-
-def test_ambiguous_partial_is_an_error_listing_candidates():
-    locations = [FAIR, {"id": "gid://shopify/Location/3", "name": "Craft Fair Backup",
-                        "isActive": True, "fulfillsOnlineOrders": False}]
-    with pytest.raises(TaskError, match="more than one location"):
-        mi._resolve_location(locations, "Craft", "--to")
-
-
-def test_unknown_location_lists_what_exists():
-    with pytest.raises(TaskError, match="Craft Fair Inventory"):
-        mi._resolve_location(LOCATIONS, "Warehouse", "--from")
-
-
-# ---------------------------------------------------------------------------
 # Compare-and-swap / partial failure
 # ---------------------------------------------------------------------------
 

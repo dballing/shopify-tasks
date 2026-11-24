@@ -66,7 +66,7 @@ def same_title(*titles):
 
 
 def reads(*, locations=(HOME, FAIR, MARKET_A), categories=(NECKLACES, EARRINGS, JEWELRY),
-          publications=(POS, GRAPHIQL, ONLINE), shop_name="Gumball Beadery"):
+          publications=(POS, GRAPHIQL, ONLINE), shop_name="Acme Beads"):
     """The four reads plan() makes, in order: locations, categories (one page,
     with a duplicate and a null to prove the dedupe), channels, shop name."""
     nodes = [{"category": c} for c in categories] + [{"category": None}]
@@ -317,7 +317,7 @@ def test_single_variant_payload(make_client, capsys):
     payload = variables["input"]
     assert payload["title"] == "Opal Wings"
     assert payload["status"] == "ACTIVE"
-    assert payload["vendor"] == "Gumball Beadery"
+    assert payload["vendor"] == "Acme Beads"
     assert payload["category"] == EARRINGS["id"]
     assert payload["descriptionHtml"] == "<p>Opal &amp; silver</p>"
     assert payload["metafields"] == [{"namespace": "custom", "key": "admin_notes",

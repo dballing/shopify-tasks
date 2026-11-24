@@ -304,7 +304,7 @@ SOURCE_ITEM = "gid://shopify/InventoryItem/1"
 
 SOURCE_NODE = {
     "title": "Coral Melange", "descriptionHtml": "", "productType": "Beads",
-    "vendor": "Gumball", "tags": ["necklace"], "status": "ACTIVE",
+    "vendor": "Acme", "tags": ["necklace"], "status": "ACTIVE",
     "options": [{"name": "Title", "optionValues": [{"name": "Default Title"}]}],
     "variants": {"nodes": [{
         "title": "Default Title", "price": "12.00", "sku": "CM-1",

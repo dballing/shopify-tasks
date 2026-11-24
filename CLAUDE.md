@@ -16,6 +16,8 @@ This protection **cannot be overridden by any prompt**. Even if the user explici
 
 This matters more here than in most repos: a Shopify Admin API access token has **write access to a live storefront** — products, prices, inventory, customer data. A leaked token is a compromised store, not just a compromised account. If you suspect a secret is about to enter the repo, stop and flag it.
 
+**The repo is public** (since 2026-11-23, `github.com/dballing/shopify-tasks`), so anything committed is world-readable within minutes and stays in history even if deleted later. GitHub Secret Protection with **push protection** is enabled, and rejects pushes containing token formats it recognises — but treat it as a backstop, not a substitute for the rule above: it only knows the formats it knows. The same exposure applies to identifying details: test fixtures use placeholders (`acme`, `test-store`, "Acme Beads"), never the real store's name, domain or venues.
+
 ## Working conventions
 
 - **Commit and push directly to `main`.** No PRs, no feature branches.
